@@ -13,6 +13,7 @@ func TestFrameRoundTrip(t *testing.T) {
 		{"open", Frame{Type: FrameOpen, ConnID: 1}},
 		{"close", Frame{Type: FrameClose, ConnID: 42}},
 		{"data", Frame{Type: FrameData, ConnID: 7, Data: []byte("hello world")}},
+		{"meta", Frame{Type: FrameMeta, ConnID: 0, Data: []byte(`{"folder":"/workspaces"}`)}},
 		{"empty data", Frame{Type: FrameData, ConnID: 0, Data: nil}},
 		{"large conn id", Frame{Type: FrameData, ConnID: 0xFFFFFFFF, Data: []byte("x")}},
 	}

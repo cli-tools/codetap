@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -11,9 +13,19 @@ import (
 // ContainerSide relays traffic between stdio and a local VS Code Server socket.
 // It reads mux frames from r (stdin), connects to the server socket for each
 // OPEN frame, and writes response frames to w (stdout).
-func ContainerSide(r io.Reader, w io.Writer, serverSocket string, logger domain.Logger) error {
+func ContainerSide(r io.Reader, w io.Writer, serverSocket string, sessionInfo *SessionInfo, logger domain.Logger) error {
 	fw := NewFrameWriter(w)
 	conns := &sync.Map{} // map[uint32]net.Conn
+
+	if sessionInfo != nil {
+		payload, err := json.Marshal(sessionInfo)
+		if err != nil {
+			return fmt.Errorf("marshal relay metadata: %w", err)
+		}
+		if err := fw.Write(Frame{Type: FrameMeta, Data: payload}); err != nil {
+			return fmt.Errorf("write metadata frame: %w", err)
+		}
+	}
 
 	// Read frames from stdin and dispatch.
 	for {

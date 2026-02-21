@@ -169,7 +169,17 @@ func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer) error 
 	// Relay mux frames between stdio and server socket
 	relayErr := make(chan error, 1)
 	go func() {
-		relayErr <- relay.ContainerSide(stdin, stdout, tmpSocket, s.logger)
+		relayErr <- relay.ContainerSide(
+			stdin,
+			stdout,
+			tmpSocket,
+			&relay.SessionInfo{
+				Name:   cfg.Name,
+				Commit: cfg.Commit,
+				Folder: cfg.Folder,
+			},
+			s.logger,
+		)
 	}()
 
 	// Wait for either server exit or relay end
