@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"time"
 
@@ -62,6 +63,21 @@ func (s *Service) Run(cfg Config) error {
 		return err
 	}
 
+	socketPath := s.store.SocketPath(cfg.Name)
+	// Prevent token/metadata clobbering if a same-named session is already running.
+	// This avoids auth mismatch errors where the .token file no longer matches the live server.
+	if _, err := os.Stat(socketPath); err == nil {
+		if isSocketAliveNow(socketPath) {
+			return fmt.Errorf(
+				"session %q already running on %s; use a different --name or stop the existing session first",
+				cfg.Name,
+				socketPath,
+			)
+		}
+		// Stale socket from an unclean exit; remove it so startup can proceed.
+		_ = os.Remove(socketPath)
+	}
+
 	// Generate connection token
 	token, err := s.tokenGen.Generate()
 	if err != nil {
@@ -95,7 +111,6 @@ func (s *Service) Run(cfg Config) error {
 	}()
 
 	// Start server — blocks until process exits
-	socketPath := s.store.SocketPath(cfg.Name)
 	return s.runner.Start(binPath, socketPath, token)
 }
 
@@ -178,6 +193,15 @@ func waitForSocket(path string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for socket %s", path)
+}
+
+func isSocketAliveNow(path string) bool {
+	conn, err := net.DialTimeout("unix", path, time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // Clean removes stale session entries whose sockets are no longer alive.

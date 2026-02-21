@@ -4,9 +4,11 @@ import * as net from 'net';
 
 type ManagedMessagePassing = {
 	onDidReceiveMessage: vscode.Event<Uint8Array>;
-	onDidClose: vscode.Event<void>;
+	onDidEnd: vscode.Event<void>;
+	onDidClose: vscode.Event<Error | undefined>;
 	send(data: Uint8Array): void;
 	end(): void;
+	drain?(): Thenable<void>;
 };
 
 type ManagedResolvedAuthority = {
@@ -77,28 +79,57 @@ export class CodetapResolverProvider {
 						return new Promise((resolve, reject) => {
 							const socket = net.createConnection(socketPath, () => {
 								const reader = new vscode.EventEmitter<Uint8Array>();
-								const writer = new vscode.EventEmitter<void>();
+								const ended = new vscode.EventEmitter<void>();
+								const closed = new vscode.EventEmitter<Error | undefined>();
+								let done = false;
+								const finish = (err?: Error): void => {
+									if (done) {
+										return;
+									}
+									done = true;
+									ended.fire();
+									closed.fire(err);
+									reader.dispose();
+									ended.dispose();
+									closed.dispose();
+								};
 
 								socket.on('data', (data: Buffer) => {
 									reader.fire(new Uint8Array(data));
 								});
 
-								socket.on('close', () => {
-									writer.fire();
+								socket.on('end', () => {
+									finish();
 								});
 
-								socket.on('error', () => {
-									writer.fire();
+								socket.on('close', (hadError: boolean) => {
+									if (!hadError) {
+										finish();
+									}
+								});
+
+								socket.on('error', (err: Error) => {
+									finish(err);
 								});
 
 								resolve({
 									onDidReceiveMessage: reader.event,
-									onDidClose: writer.event,
+									onDidEnd: ended.event,
+									onDidClose: closed.event,
 									send(data: Uint8Array): void {
 										socket.write(data);
 									},
 									end(): void {
 										socket.end();
+									},
+									drain(): Thenable<void> {
+										return new Promise<void>(drainResolve => {
+											if (socket.writableNeedDrain) {
+												socket.once('drain', () => drainResolve());
+												return;
+											}
+											drainResolve();
+										});
 									}
 								});
 							});

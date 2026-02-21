@@ -23,12 +23,16 @@
     "Other"
   ],
   "activationEvents": [
+    "onResolveRemoteAuthority:codetap",
     "onView:codetap.sessions",
     "onCommand:codetap.connect",
     "onCommand:codetap.refresh",
     "onCommand:codetap.copyToken"
   ],
   "main": "./out/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
   "files": [
     "out/**/*.js",
     "package.json",
