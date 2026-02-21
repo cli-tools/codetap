@@ -64,6 +64,8 @@ The VS Code extension discovers the session in `/dev/shm/codetap/` and offers to
 
 For containers that can't share IPC, the stdio relay multiplexes VS Code Server traffic over stdin/stdout. No shared memory required.
 
+The VS Code extension automatically writes its commit hash to a sidecar file. The relay reads it and negotiates the correct VS Code Server version with the remote side via an init handshake — no `--commit` flag needed.
+
 ```sh
 # On the host — codetap creates the /dev/shm socket and spawns the remote command
 codetap relay --name myproject -- \
@@ -86,6 +88,10 @@ codetap relay --name k8s-pod -- \
   kubectl exec -i mypod -- \
   codetap run --stdio
 ```
+
+#### Init phase (automatic commit negotiation)
+
+When the relay starts, it waits (up to 30 seconds) for the VS Code extension to write a `.commit` file containing the client's exact VS Code Server commit hash. The relay then sends this commit to the remote side in a `FrameInit` message. The remote provisions the matching VS Code Server version and acknowledges before any connections are accepted. This eliminates version mismatch errors entirely.
 
 ### Listing sessions
 
@@ -131,13 +137,12 @@ Running with no subcommand prints help. Passing flags without a subcommand defau
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--name` | hostname | Session name |
-| `--commit` | | Commit hash for metadata |
 | `--folder` | cwd | Workspace folder for metadata |
 | `--socket-dir` | `/dev/shm/codetap` | Socket directory |
 
 ## Commit resolution
 
-CodeTap automatically determines which VS Code Server version to download. The resolution order is:
+CodeTap automatically determines which VS Code Server version to download. The resolution order for direct mode (`codetap run`) is:
 
 1. `--commit` flag (hash like `abc123...`, version like `1.109.5`, or `latest`)
 2. `CODETAP_COMMIT` environment variable
@@ -147,6 +152,8 @@ CodeTap automatically determines which VS Code Server version to download. The r
 
 Running bare `codetap run` with network access downloads the latest stable server. To run offline, provide a commit via any of the first three methods.
 
+In **stdio relay mode** (`codetap relay ... -- codetap run --stdio`), the commit is negotiated automatically: the VS Code extension writes the client's commit hash to a `.commit` sidecar file, and the relay sends it to the remote side via a `FrameInit` handshake before any connections are accepted. This ensures the remote always provisions the exact VS Code Server version that the client needs.
+
 ## Storage
 
 | Path | Purpose |
@@ -154,7 +161,7 @@ Running bare `codetap run` with network access downloads the latest stable serve
 | `~/.codetap/cache/` | Downloaded VS Code Server tarballs |
 | `~/.codetap/repository/` | Extracted VS Code Server binaries |
 | `~/.codetap/.commit` | Default commit hash |
-| `/dev/shm/codetap/` | Runtime sockets, metadata, and tokens |
+| `/dev/shm/codetap/` | Runtime sockets, metadata, tokens, and commit sidecar files |
 
 ## VS Code Extension
 

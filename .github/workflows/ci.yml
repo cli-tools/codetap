@@ -44,7 +44,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goarch: [amd64, arm64]
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -52,17 +58,17 @@ jobs:
           go-version: '1.22'
       - name: Build static binary
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} \
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
             go build -ldflags '-s -w' \
-            -o codetap-linux-${{ matrix.goarch }} \
+            -o codetap-${{ matrix.goos }}-${{ matrix.goarch }} \
             ./cmd/codetap
       - name: Verify static linking
-        if: matrix.goarch == 'amd64'
-        run: file codetap-linux-${{ matrix.goarch }} | grep -q "statically linked"
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: file codetap-${{ matrix.goos }}-${{ matrix.goarch }} | grep -q "statically linked"
       - uses: actions/upload-artifact@v4
         with:
-          name: codetap-linux-${{ matrix.goarch }}
-          path: codetap-linux-${{ matrix.goarch }}
+          name: codetap-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: codetap-${{ matrix.goos }}-${{ matrix.goarch }}
 
   extension:
     runs-on: ubuntu-latest
@@ -95,4 +101,5 @@ jobs:
           files: |
             codetap-linux-amd64/codetap-linux-amd64
             codetap-linux-arm64/codetap-linux-arm64
+            codetap-darwin-arm64/codetap-darwin-arm64
             codetap-vsix/codetap.vsix

@@ -138,10 +138,42 @@ func (s *Service) Provision(commit, arch string) (string, error) {
 // RunStdio starts VS Code Server on a temporary socket inside the container
 // and relays all traffic over stdin/stdout using the mux frame protocol.
 // This mode does NOT require --ipc=host on the container.
-func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer) error {
-	s.logger.Info("starting stdio session", "commit", cfg.Commit, "arch", cfg.Arch)
+//
+// If cfg.Commit is empty, RunStdio waits for a FrameInit frame from the host
+// relay containing the commit hash. If that is also empty, resolveCommit is
+// called as a fallback (e.g. to fetch the latest stable version).
+func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer, resolveCommit func() (string, error)) error {
+	commit := cfg.Commit
+	initPhase := commit == ""
 
-	binPath, err := s.Provision(cfg.Commit, cfg.Arch)
+	// Init phase: wait for FrameInit from host relay with commit hash
+	if initPhase {
+		s.logger.Info("waiting for init frame with commit hash")
+		var err error
+		commit, err = readInitCommit(stdin)
+		if err != nil {
+			return err
+		}
+		if commit != "" {
+			s.logger.Info("received init frame", "commit", commit)
+		} else {
+			s.logger.Info("init frame had no commit, resolving locally")
+			if resolveCommit != nil {
+				commit, err = resolveCommit()
+				if err != nil {
+					return fmt.Errorf("resolve commit: %w", err)
+				}
+			}
+			if commit == "" {
+				return fmt.Errorf("no commit available from init frame or local resolution")
+			}
+			s.logger.Info("resolved commit locally", "commit", commit)
+		}
+	}
+
+	s.logger.Info("starting stdio session", "commit", commit, "arch", cfg.Arch)
+
+	binPath, err := s.Provision(commit, cfg.Arch)
 	if err != nil {
 		return err
 	}
@@ -166,6 +198,16 @@ func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer) error 
 	}
 	s.logger.Info("server ready, starting relay", "socket", tmpSocket)
 
+	// Send init ack back to host so it knows provisioning succeeded
+	if initPhase {
+		if err := relay.WriteFrame(stdout, relay.Frame{
+			Type: relay.FrameInit, ConnID: 0, Data: []byte(commit),
+		}); err != nil {
+			return fmt.Errorf("write init ack: %w", err)
+		}
+		s.logger.Info("init ack sent", "commit", commit)
+	}
+
 	// Relay mux frames between stdio and server socket
 	relayErr := make(chan error, 1)
 	go func() {
@@ -179,6 +221,20 @@ func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer) error 
 	case err := <-relayErr:
 		return err
 	}
+}
+
+// readInitCommit reads a FrameInit frame from r and returns the commit hash.
+// An empty commit in the frame is valid — it signals the remote should use
+// its own resolution chain (env, file, code CLI, latest stable).
+func readInitCommit(r io.Reader) (string, error) {
+	frame, err := relay.ReadFrame(r)
+	if err != nil {
+		return "", fmt.Errorf("read init frame: %w", err)
+	}
+	if frame.Type != relay.FrameInit {
+		return "", fmt.Errorf("expected FrameInit (0x%02x), got 0x%02x", relay.FrameInit, frame.Type)
+	}
+	return string(frame.Data), nil
 }
 
 func waitForSocket(path string) error {

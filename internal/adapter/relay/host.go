@@ -1,22 +1,53 @@
 package relay
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"codetap/internal/domain"
 )
 
+// waitForCommitFile polls for the .commit sidecar file written by the VS Code
+// extension. Blocks until the file appears.
+func waitForCommitFile(path string, logger domain.Logger) string {
+	logger.Info("waiting for VS Code client", "path", path)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			c := strings.TrimSpace(string(data))
+			if c != "" {
+				short := c
+				if len(short) > 12 {
+					short = short[:12]
+				}
+				logger.Info("commit file found", "commit", short)
+				_ = os.Remove(path)
+				return c
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
 // HostSide creates a Unix socket listener, spawns the remote command, and
 // multiplexes accepted connections over the subprocess stdin/stdout.
-func HostSide(socketPath string, command []string, logger domain.Logger) error {
-	// Remove stale socket
+//
+// commitFilePath is the path to a sidecar file written by the VS Code
+// extension containing the client's commit hash. HostSide creates the socket
+// listener first (so the session is discoverable), then waits for the file,
+// spawns the subprocess, and performs the FrameInit handshake.
+func HostSide(socketPath string, command []string, commitFilePath string, onInit func(string), logger domain.Logger) error {
+	// Create socket listener first so the session is discoverable by the
+	// VS Code extension and isAlive checks succeed.
 	_ = os.Remove(socketPath)
 
 	listener, err := net.Listen("unix", socketPath)
@@ -31,6 +62,9 @@ func HostSide(socketPath string, command []string, logger domain.Logger) error {
 	}()
 
 	logger.Info("listening", "socket", socketPath)
+
+	// Wait for the .commit file from the VS Code extension.
+	commit := waitForCommitFile(commitFilePath, logger)
 
 	// Spawn the subprocess
 	cmd := exec.Command(command[0], command[1:]...)
@@ -62,6 +96,25 @@ func HostSide(socketPath string, command []string, logger domain.Logger) error {
 	}()
 
 	fw := NewFrameWriter(stdinPipe)
+
+	// Init phase: send commit to remote and wait for ack.
+	logger.Info("sending init frame", "commit", commit)
+	if err := fw.Write(Frame{Type: FrameInit, ConnID: 0, Data: []byte(commit)}); err != nil {
+		return fmt.Errorf("write init frame: %w", err)
+	}
+
+	ackFrame, err := ReadFrame(stdoutPipe)
+	if err != nil {
+		return fmt.Errorf("read init ack: %w", err)
+	}
+	if ackFrame.Type != FrameInit {
+		return fmt.Errorf("expected FrameInit ack, got 0x%02x", ackFrame.Type)
+	}
+	logger.Info("init ack received", "commit", string(ackFrame.Data))
+	if onInit != nil {
+		onInit(string(ackFrame.Data))
+	}
+
 	conns := &sync.Map{} // map[uint32]net.Conn
 	var nextID atomic.Uint32
 

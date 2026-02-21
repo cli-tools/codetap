@@ -35,6 +35,10 @@ func (s *FileStore) tokenPath(name string) string {
 	return filepath.Join(s.socketDir, name+".token")
 }
 
+func (s *FileStore) commitPath(name string) string {
+	return filepath.Join(s.socketDir, name+".commit")
+}
+
 // WriteMetadata writes the metadata JSON file (mode 0644).
 func (s *FileStore) WriteMetadata(m domain.Metadata) error {
 	if err := os.MkdirAll(s.socketDir, 0755); err != nil {
@@ -113,11 +117,12 @@ func (s *FileStore) ListEntries() ([]domain.SocketEntry, error) {
 	return entries, nil
 }
 
-// Remove deletes the socket, token, and metadata files for the given name.
+// Remove deletes the socket, token, metadata, and commit files for the given name.
 func (s *FileStore) Remove(name string) error {
 	os.Remove(s.SocketPath(name))
 	os.Remove(s.tokenPath(name))
 	os.Remove(s.metadataPath(name))
+	os.Remove(s.commitPath(name))
 	return nil
 }
 

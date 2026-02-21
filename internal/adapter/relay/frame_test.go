@@ -15,6 +15,8 @@ func TestFrameRoundTrip(t *testing.T) {
 		{"data", Frame{Type: FrameData, ConnID: 7, Data: []byte("hello world")}},
 		{"empty data", Frame{Type: FrameData, ConnID: 0, Data: nil}},
 		{"large conn id", Frame{Type: FrameData, ConnID: 0xFFFFFFFF, Data: []byte("x")}},
+		{"init", Frame{Type: FrameInit, ConnID: 0, Data: []byte("abc123def456abc123def456abc123def456abc1")}},
+		{"init empty", Frame{Type: FrameInit, ConnID: 0, Data: nil}},
 	}
 
 	for _, tt := range tests {
@@ -46,6 +48,7 @@ func TestFrameMultipleRoundTrips(t *testing.T) {
 	var buf bytes.Buffer
 
 	frames := []Frame{
+		{Type: FrameInit, ConnID: 0, Data: []byte("abc123")},
 		{Type: FrameOpen, ConnID: 1},
 		{Type: FrameData, ConnID: 1, Data: []byte("first")},
 		{Type: FrameData, ConnID: 2, Data: []byte("second")},

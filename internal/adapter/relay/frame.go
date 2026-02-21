@@ -12,6 +12,7 @@ const (
 	FrameOpen  byte = 0x01 // New connection
 	FrameData  byte = 0x02 // Data payload
 	FrameClose byte = 0x03 // Connection closed
+	FrameInit  byte = 0x04 // Init phase: commit negotiation
 )
 
 // Frame is a multiplexed message with a connection ID and payload.

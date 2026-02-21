@@ -155,7 +155,8 @@ Flags:`)
 		}
 	}
 
-	if resolvedCommit == "" {
+	if resolvedCommit == "" && !*stdio {
+		// Only fetch latest in direct mode; stdio mode defers to init phase
 		log.Info("no commit specified, fetching latest stable from Microsoft")
 		resolvedCommit, err = resolver.Resolve("latest")
 		if err != nil {
@@ -195,7 +196,16 @@ Flags:`)
 	}
 
 	if *stdio {
-		if err := svc.RunStdio(cfg, os.Stdin, os.Stdout); err != nil {
+		fallback := func() (string, error) {
+			log.Info("no commit from relay, fetching latest stable from Microsoft")
+			c, err := resolver.Resolve("latest")
+			if err != nil {
+				return "", fmt.Errorf("auto-resolve commit: %w", err)
+			}
+			log.Info("resolved latest stable", "commit", c[:12])
+			return c, nil
+		}
+		if err := svc.RunStdio(cfg, os.Stdin, os.Stdout, fallback); err != nil {
 			fatal(err)
 		}
 	} else {
@@ -307,20 +317,23 @@ Creates a Unix socket in /dev/shm/codetap/ on the host and spawns a remote
 command that runs "codetap run --stdio". Traffic is multiplexed between the
 local socket and the remote process via stdin/stdout.
 
+The VS Code extension automatically writes the required commit hash to a
+sidecar file. The relay reads it and negotiates the correct VS Code Server
+version with the remote side — no --commit flag needed.
+
 Usage:
   codetap relay [flags] -- COMMAND [ARGS...]
 
 Examples:
-  codetap relay --name dev -- docker exec -i ctr codetap run --stdio --commit abc123
-  codetap relay --name srv -- ssh host codetap run --stdio --commit abc123
-  codetap relay --name pod -- kubectl exec -i pod -- codetap run --stdio --commit abc123
+  codetap relay --name dev -- docker exec -i ctr codetap run --stdio
+  codetap relay --name srv -- ssh host codetap run --stdio
+  codetap relay --name pod -- kubectl exec -i pod -- codetap run --stdio
 
 Flags:`)
 		printFlags(fs)
 	}
 
 	name := fs.String("name", "", "session name (default: hostname)")
-	commit := fs.String("commit", "", "commit hash for metadata")
 	folder := fs.String("folder", "", "workspace folder for metadata (default: cwd)")
 	socketDir := fs.String("socket-dir", "", "socket directory (default: /dev/shm/codetap)")
 	if err := fs.Parse(args); err != nil {
@@ -371,7 +384,6 @@ Flags:`)
 
 	meta := domain.Metadata{
 		Name:      resolvedName,
-		Commit:    *commit,
 		Arch:      arch,
 		Folder:    resolvedFolder,
 		PID:       os.Getpid(),
@@ -381,14 +393,22 @@ Flags:`)
 		fatal(err)
 	}
 
+	commitFilePath := filepath.Join(sockDir, resolvedName+".commit")
+
 	defer func() {
 		log.Info("cleaning up relay session", "name", resolvedName)
+		_ = os.Remove(commitFilePath)
 		if err := st.Remove(resolvedName); err != nil {
 			log.Error("relay cleanup failed", "name", resolvedName, "err", err)
 		}
 	}()
 
-	if err := relay.HostSide(socketPath, remaining, log); err != nil {
+	onInit := func(ackedCommit string) {
+		meta.Commit = ackedCommit
+		_ = st.WriteMetadata(meta)
+	}
+
+	if err := relay.HostSide(socketPath, remaining, commitFilePath, onInit, log); err != nil {
 		fatal(err)
 	}
 }

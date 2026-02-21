@@ -56,6 +56,27 @@ type VscodeResolverAPI = {
 	RemoteAuthorityResolverError?: ResolverErrorFactory;
 };
 
+function getVSCodeCommit(): string | undefined {
+	// vscode.env.appCommit is available since VS Code 1.80+
+	try {
+		const commit = (vscode.env as any).appCommit;
+		if (typeof commit === 'string' && /^[0-9a-f]{40}$/.test(commit)) {
+			return commit;
+		}
+	} catch { /* fallback below */ }
+
+	// Fallback: read product.json from the VS Code installation
+	try {
+		const productPath = path.join(vscode.env.appRoot, 'product.json');
+		const product = JSON.parse(fs.readFileSync(productPath, 'utf-8'));
+		if (typeof product.commit === 'string' && /^[0-9a-f]{40}$/.test(product.commit)) {
+			return product.commit;
+		}
+	} catch { /* ignore */ }
+
+	return undefined;
+}
+
 export class CodetapResolverProvider {
 	static register(context: vscode.ExtensionContext): boolean {
 		const workspaceAPI = vscode.workspace as unknown as RemoteResolverAPI;
@@ -120,6 +141,18 @@ export class CodetapResolverProvider {
 					}
 					const socketPath = decodeURIComponent(parts.slice(1).join('+'));
 					registerHostLabelFormatter(authority, socketPath);
+
+					// Write the VS Code commit hash so the relay can negotiate
+					// the correct VS Code Server version with the remote side.
+					const commitHash = getVSCodeCommit();
+					if (commitHash) {
+						const commitPath = socketPath.replace(/\.sock$/, '.commit');
+						try {
+							fs.writeFileSync(commitPath, commitHash + '\n', { mode: 0o644 });
+						} catch {
+							// Best effort — relay may already have a commit
+						}
+					}
 
 					// Read the connection token from the paired .token file
 					const tokenPath = socketPath.replace(/\.sock$/, '.token');

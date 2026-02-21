@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
+	"codetap/internal/adapter/relay"
 	"codetap/internal/domain"
 )
 
@@ -360,5 +362,64 @@ func TestProvision_DownloadsAndExtracts(t *testing.T) {
 	}
 	if !ex.called {
 		t.Error("expected extract")
+	}
+}
+
+func TestReadInitCommit_Success(t *testing.T) {
+	var buf bytes.Buffer
+	commit := "abc123def456abc123def456abc123def456abc1"
+	if err := relay.WriteFrame(&buf, relay.Frame{
+		Type: relay.FrameInit, ConnID: 0, Data: []byte(commit),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readInitCommit(&buf)
+	if err != nil {
+		t.Fatalf("readInitCommit() error: %v", err)
+	}
+	if got != commit {
+		t.Errorf("got %q, want %q", got, commit)
+	}
+}
+
+func TestReadInitCommit_WrongFrameType(t *testing.T) {
+	var buf bytes.Buffer
+	if err := relay.WriteFrame(&buf, relay.Frame{
+		Type: relay.FrameData, ConnID: 1, Data: []byte("hello"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := readInitCommit(&buf)
+	if err == nil {
+		t.Fatal("expected error for wrong frame type")
+	}
+}
+
+func TestReadInitCommit_EmptyCommit(t *testing.T) {
+	var buf bytes.Buffer
+	if err := relay.WriteFrame(&buf, relay.Frame{
+		Type: relay.FrameInit, ConnID: 0, Data: nil,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readInitCommit(&buf)
+	if err != nil {
+		t.Fatalf("readInitCommit() error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("got %q, want empty string", got)
+	}
+}
+
+func TestReadInitCommit_ReadError(t *testing.T) {
+	// Empty reader — ReadFrame will fail with EOF
+	var buf bytes.Buffer
+
+	_, err := readInitCommit(&buf)
+	if err == nil {
+		t.Fatal("expected error from empty reader")
 	}
 }
