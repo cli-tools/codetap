@@ -4,7 +4,15 @@
   "description": "Discover and connect to CodeTap VS Code Server sessions in containers",
   "version": "0.1.0",
   "publisher": "codetap",
-  "license": "MIT",
+  "license": "0BSD",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cli-tools/codetap.git"
+  },
+  "homepage": "https://github.com/cli-tools/codetap",
+  "bugs": {
+    "url": "https://github.com/cli-tools/codetap/issues"
+  },
   "engines": {
     "vscode": "^1.87.0"
   },
@@ -12,9 +20,18 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onView:codetap.sessions",
+    "onCommand:codetap.connect",
+    "onCommand:codetap.refresh",
+    "onCommand:codetap.copyToken"
   ],
   "main": "./out/extension.js",
+  "files": [
+    "out/**/*.js",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -88,12 +105,13 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "npx @vscode/vsce package --out codetap.vsix"
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --out codetap.vsix"
   },
   "devDependencies": {
-    "@types/vscode": "^1.87.0",
     "@types/node": "^20.0.0",
-    "typescript": "^5.3.0",
-    "@vscode/vsce": "^2.22.0"
+    "@types/vscode": "^1.87.0",
+    "@vscode/vsce": "^3.7.1",
+    "typescript": "^5.3.0"
   }
 }

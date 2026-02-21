@@ -167,7 +167,7 @@ The companion TypeScript extension (`extension/`) turns VS Code into a CodeTap c
 | `codetap.socketDir` | `/dev/shm/codetap` | Directory to scan for sessions |
 | `codetap.pollInterval` | `3000` | Polling interval in milliseconds |
 
-Build: `cd extension && npm ci && npm run compile && npx @vscode/vsce package --out codetap.vsix`
+Build: `cd extension && npm ci && npm run compile && npm run package`
 
 ## Building from source
 
