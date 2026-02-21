@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -381,6 +382,32 @@ Flags:`)
 		fatal(err)
 	}
 
+	var metaMu sync.Mutex
+	applyRemoteMetadata := func(info relay.SessionInfo) error {
+		metaMu.Lock()
+		defer metaMu.Unlock()
+
+		updated := meta
+		changed := false
+		if info.Commit != "" && info.Commit != updated.Commit {
+			updated.Commit = info.Commit
+			changed = true
+		}
+		if info.Folder != "" && info.Folder != updated.Folder {
+			updated.Folder = info.Folder
+			changed = true
+		}
+		if !changed {
+			return nil
+		}
+		if err := st.WriteMetadata(updated); err != nil {
+			return err
+		}
+		meta = updated
+		log.Info("updated relay metadata from remote", "name", resolvedName, "folder", updated.Folder, "commit", updated.Commit)
+		return nil
+	}
+
 	defer func() {
 		log.Info("cleaning up relay session", "name", resolvedName)
 		if err := st.Remove(resolvedName); err != nil {
@@ -388,7 +415,7 @@ Flags:`)
 		}
 	}()
 
-	if err := relay.HostSide(socketPath, remaining, log); err != nil {
+	if err := relay.HostSide(socketPath, remaining, applyRemoteMetadata, log); err != nil {
 		fatal(err)
 	}
 }

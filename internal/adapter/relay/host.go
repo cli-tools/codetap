@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/json"
 	"io"
 	"net"
 	"os"
@@ -15,7 +16,7 @@ import (
 
 // HostSide creates a Unix socket listener, spawns the remote command, and
 // multiplexes accepted connections over the subprocess stdin/stdout.
-func HostSide(socketPath string, command []string, logger domain.Logger) error {
+func HostSide(socketPath string, command []string, onSessionInfo func(SessionInfo) error, logger domain.Logger) error {
 	// Remove stale socket
 	_ = os.Remove(socketPath)
 
@@ -87,6 +88,17 @@ func HostSide(socketPath string, command []string, logger domain.Logger) error {
 			case FrameClose:
 				if v, ok := conns.LoadAndDelete(frame.ConnID); ok {
 					_ = v.(net.Conn).Close()
+				}
+			case FrameMeta:
+				var info SessionInfo
+				if err := json.Unmarshal(frame.Data, &info); err != nil {
+					logger.Error("parse metadata frame failed", "err", err)
+					continue
+				}
+				if onSessionInfo != nil {
+					if err := onSessionInfo(info); err != nil {
+						logger.Error("apply remote metadata failed", "err", err)
+					}
 				}
 			}
 		}

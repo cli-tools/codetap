@@ -184,84 +184,74 @@ Build: `cd extension && npm ci && npm run compile && npm run package`
 
 ## Replacing devcontainers with Docker Compose + CodeTap
 
-VS Code Dev Containers couple your container lifecycle to the IDE. Docker Compose + CodeTap gives you the same remote-development experience with plain Docker tooling — no Dev Containers extension, no `devcontainer.json`, no IDE lock-in.
+VS Code Dev Containers couple your container lifecycle to the IDE. Docker Compose + CodeTap gives you the same remote-development experience with plain Docker tooling: no Dev Containers extension, no `devcontainer.json`, and no IDE lock-in.
 
-### The pattern
+Use one of these two modes depending on whether shared IPC is allowed.
 
-1. **`compose.yaml` runs CodeTap as the container entrypoint** with stdin open and no TTY:
+### Mode A: Shared IPC (`ipc: host`) — simplest
 
-```yaml
-services:
-  myservice:
-    image: myimage:latest
-    container_name: myservice
-    stdin_open: true   # keep stdin pipe open (-i)
-    tty: false         # no pseudo-TTY (critical for stdio relay)
-    command: ~/.local/bin/codetap run --stdio
-    # ... volumes, environment, etc.
-```
+If your environment allows shared IPC, this is the cleanest workflow. Run CodeTap directly in the container with a fixed `--name`, and the host extension discovers it immediately.
 
-2. **Start the container** with `docker compose up -d`. The container launches CodeTap in stdio mode and waits for a relay connection on stdin.
-
-3. **Attach from the host** using `codetap relay` + `docker attach`:
-
-```sh
-codetap relay --name myservice -- docker attach myservice
-```
-
-`docker attach` connects to the main process's stdin/stdout — exactly the stdio pipe that `codetap run --stdio` expects. The relay creates the `/dev/shm/codetap/` socket and the VS Code extension discovers it.
-
-### Why this works
-
-| Docker Compose key | Effect |
-|---------------------|--------|
-| `stdin_open: true` | Keeps the container's stdin file descriptor open (equivalent to `docker run -i`) |
-| `tty: false` | No PTY allocation — raw byte stream, which is what the stdio multiplexer needs |
-
-The combination gives CodeTap a clean bidirectional pipe. `docker attach` hooks into that same pipe without spawning a new process (unlike `docker exec`).
-
-### Comparison with devcontainers
-
-| | Dev Containers | Compose + CodeTap |
-|---|---|---|
-| IDE dependency | VS Code only | Any editor (VS Code via extension, others via socket) |
-| Config files | `devcontainer.json` + Dockerfile | `compose.yaml` (you already have one) |
-| Container lifecycle | Managed by IDE | Managed by `docker compose` |
-| Multi-service | Awkward | Native — compose was built for this |
-| CI reuse | Requires special tooling | Same `compose.yaml` runs in CI unchanged |
-| Attach/detach | Kills session | Relay reconnects; container keeps running |
-
-### Full example
+Assumption: `codetap` is available in `PATH` inside the container.
 
 ```yaml
 services:
   dev:
     image: registry.example.com/myteam/devimage:latest
     container_name: dev
-    user: ${USER}
-    network_mode: host
     ipc: host
     volumes:
-      - /etc/passwd:/etc/passwd:ro
-      - $HOME:$HOME
       - ..:/workspaces
     working_dir: /workspaces/myproject
-    environment:
-      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-    stdin_open: true
-    tty: false
-    command: ~/.local/bin/codetap run --stdio
-
-volumes:
-  shared-data:
-    external: true
+    command: codetap run --name dev --folder /workspaces/myproject
 ```
 
 ```sh
 docker compose up -d
-codetap relay --name dev -- docker attach dev
-# VS Code discovers the session and connects
+# No relay command needed in shared IPC mode.
+# VS Code discovers session name "dev" from /dev/shm/codetap on the host.
 ```
+
+### Mode B: Isolated IPC (no `ipc: host`) — relay over stdio
+
+When shared IPC is not available, keep the container running normally and bridge with `codetap relay` + `docker compose exec -T`.
+
+Assumption: `codetap` is available in `PATH` on both host and container.
+The host discoverable name comes from `codetap relay --name ...`. Folder/commit metadata are synced from the in-container `codetap run --stdio` process.
+If host and container run different CodeTap versions and metadata sync is unavailable, pass `--folder` to `codetap relay` as a fallback.
+
+```yaml
+services:
+  dev:
+    image: registry.example.com/myteam/devimage:latest
+    container_name: dev
+    volumes:
+      - ..:/workspaces
+    working_dir: /workspaces/myproject
+    command: sleep infinity
+```
+
+```sh
+docker compose up -d
+
+codetap relay --name dev -- \
+  docker compose exec -T dev \
+  codetap run --stdio --name dev --folder /workspaces/myproject
+```
+
+In this mode, the host-side `codetap relay` creates `/dev/shm/codetap/dev.sock` and forwards traffic to the in-container stdio session.
+
+### Comparison with devcontainers
+
+| | Dev Containers | Compose + CodeTap |
+|---|---|---|
+| IDE dependency | VS Code only | Any editor (VS Code via extension, others via socket) |
+| Config files | `devcontainer.json` + Dockerfile | `compose.yaml` |
+| Container lifecycle | Managed by IDE | Managed by `docker compose` |
+| Shared IPC environments | N/A | Direct `codetap run` (no relay) |
+| Isolated IPC environments | N/A | `codetap relay` over `docker compose exec -T` |
+| Multi-service | Awkward | Native Compose workflow |
+| CI reuse | Requires special tooling | Same `compose.yaml` works in CI |
 
 ## Building from source
 

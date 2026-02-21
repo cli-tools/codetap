@@ -12,6 +12,7 @@ const (
 	FrameOpen  byte = 0x01 // New connection
 	FrameData  byte = 0x02 // Data payload
 	FrameClose byte = 0x03 // Connection closed
+	FrameMeta  byte = 0x04 // Session metadata update
 )
 
 // Frame is a multiplexed message with a connection ID and payload.
@@ -19,6 +20,14 @@ type Frame struct {
 	Type   byte
 	ConnID uint32
 	Data   []byte
+}
+
+// SessionInfo is optional metadata sent by the container side during stdio relay
+// startup so the host can keep session metadata in sync with the remote runtime.
+type SessionInfo struct {
+	Name   string `json:"name,omitempty"`
+	Commit string `json:"commit,omitempty"`
+	Folder string `json:"folder,omitempty"`
 }
 
 // MaxFramePayload limits individual frame payloads to 1MB.
