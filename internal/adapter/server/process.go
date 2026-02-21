@@ -24,14 +24,24 @@ func NewProcessRunner(logger domain.Logger) *ProcessRunner {
 // It blocks until the process exits. Signals (SIGINT, SIGTERM) are forwarded
 // to the child process.
 func (r *ProcessRunner) Start(binPath, socketPath, token string) error {
-	cmd := exec.Command(binPath,
-		"--socket-path="+socketPath,
-		"--connection-token="+token,
+	args := []string{
+		"--socket-path=" + socketPath,
 		"--accept-server-license-terms",
-	)
-	cmd.Stdout = os.Stdout
+	}
+	if token == "" {
+		args = append(args, "--without-connection-token")
+	} else {
+		args = append(args, "--connection-token="+token)
+	}
+
+	cmd := exec.Command(binPath, args...)
+	// Stdout is reserved for relay frame traffic in `codetap run --stdio`.
+	// Keep code-server logs on stderr to avoid corrupting the mux protocol.
+	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
+	// Do not share stdin with code-server. In stdio relay mode stdin carries
+	// framed transport data and must remain exclusive to the relay reader.
+	cmd.Stdin = nil
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start code-server: %w", err)
