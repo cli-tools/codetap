@@ -77,16 +77,17 @@ func TestFrameWriter_ConcurrentSafety(t *testing.T) {
 	var buf bytes.Buffer
 	fw := NewFrameWriter(&buf)
 
-	done := make(chan struct{})
+	done := make(chan error, 10)
 	for i := 0; i < 10; i++ {
 		go func(id uint32) {
-			fw.Write(Frame{Type: FrameData, ConnID: id, Data: []byte("test")})
-			done <- struct{}{}
+			done <- fw.Write(Frame{Type: FrameData, ConnID: id, Data: []byte("test")})
 		}(uint32(i))
 	}
 
 	for i := 0; i < 10; i++ {
-		<-done
+		if err := <-done; err != nil {
+			t.Fatalf("WriteFrame[%d]: %v", i, err)
+		}
 	}
 
 	// Read all 10 frames back

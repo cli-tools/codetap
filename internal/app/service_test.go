@@ -170,7 +170,9 @@ func TestRun_Cleanup(t *testing.T) {
 		&mockTokenGen{token: "tok"},
 	)
 
-	svc.Run(testConfig())
+	if err := svc.Run(testConfig()); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
 
 	if len(st.removed) == 0 {
 		t.Error("expected cleanup to remove session files")
@@ -198,7 +200,9 @@ func TestRun_CleanupOnError(t *testing.T) {
 		&mockTokenGen{token: "tok"},
 	)
 
-	svc.Run(testConfig())
+	if err := svc.Run(testConfig()); err == nil {
+		t.Fatal("expected Run() to return server error")
+	}
 
 	found := false
 	for _, name := range st.removed {
@@ -223,7 +227,9 @@ func TestRun_MetadataWritten(t *testing.T) {
 		&mockTokenGen{token: "my-token"},
 	)
 
-	svc.Run(testConfig())
+	if err := svc.Run(testConfig()); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
 
 	meta, ok := st.metadata["test-session"]
 	if !ok {

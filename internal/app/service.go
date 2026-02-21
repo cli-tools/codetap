@@ -89,7 +89,9 @@ func (s *Service) Run(cfg Config) error {
 	// Clean up session files on exit
 	defer func() {
 		s.logger.Info("cleaning up session", "name", cfg.Name)
-		s.store.Remove(cfg.Name)
+		if err := s.store.Remove(cfg.Name); err != nil {
+			s.logger.Error("cleanup failed", "name", cfg.Name, "err", err)
+		}
 	}()
 
 	// Start server — blocks until process exits
@@ -137,7 +139,9 @@ func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer) error 
 
 	// Use a temp socket inside the container
 	tmpSocket := fmt.Sprintf("/tmp/codetap-%d.sock", os.Getpid())
-	os.Remove(tmpSocket)
+	if err := os.Remove(tmpSocket); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale temp socket: %w", err)
+	}
 
 	// Start server in background goroutine
 	serverErr := make(chan error, 1)
@@ -187,7 +191,10 @@ func (s *Service) Clean() error {
 	for _, e := range entries {
 		if !e.Alive {
 			s.logger.Info("removing stale session", "name", e.Name)
-			s.store.Remove(e.Name)
+			if err := s.store.Remove(e.Name); err != nil {
+				s.logger.Error("remove stale session failed", "name", e.Name, "err", err)
+				continue
+			}
 			removed++
 		}
 	}

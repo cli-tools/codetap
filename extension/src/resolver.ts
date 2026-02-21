@@ -2,16 +2,61 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as net from 'net';
 
+type ManagedMessagePassing = {
+	onDidReceiveMessage: vscode.Event<Uint8Array>;
+	onDidClose: vscode.Event<void>;
+	send(data: Uint8Array): void;
+	end(): void;
+};
+
+type ManagedResolvedAuthority = {
+	connectionToken?: string;
+};
+
+type ManagedResolvedAuthorityCtor = new (
+	makeConnection: () => Thenable<ManagedMessagePassing>
+) => ManagedResolvedAuthority;
+
+type ResolverErrorFactory = {
+	NotAvailable(message: string): Error;
+};
+
+type RemoteResolverAPI = {
+	registerRemoteAuthorityResolver?: (
+		authorityPrefix: string,
+		resolver: { resolve(authority: string): Thenable<ManagedResolvedAuthority> }
+	) => vscode.Disposable;
+};
+
+type VscodeResolverAPI = {
+	ManagedResolvedAuthority?: ManagedResolvedAuthorityCtor;
+	RemoteAuthorityResolverError?: ResolverErrorFactory;
+};
+
 export class CodetapResolverProvider {
-	static register(context: vscode.ExtensionContext): void {
+	static register(context: vscode.ExtensionContext): boolean {
+		const workspaceAPI = vscode.workspace as unknown as RemoteResolverAPI;
+		const resolverAPI = vscode as unknown as VscodeResolverAPI;
+
+		const registerRemoteAuthorityResolver = workspaceAPI.registerRemoteAuthorityResolver;
+		const managedResolvedAuthority = resolverAPI.ManagedResolvedAuthority;
+		const remoteAuthorityResolverError = resolverAPI.RemoteAuthorityResolverError;
+		if (
+			!registerRemoteAuthorityResolver ||
+			!managedResolvedAuthority ||
+			!remoteAuthorityResolverError
+		) {
+			return false;
+		}
+
 		// Register the codetap remote authority resolver.
 		// URI format: vscode-remote://codetap+<encodedSocketPath>/<folder>
-		const resolver = vscode.workspace.registerRemoteAuthorityResolver('codetap', {
-			resolve(authority: string): Thenable<vscode.ResolvedAuthority> {
+		const resolver = registerRemoteAuthorityResolver('codetap', {
+			resolve(authority: string): Thenable<ManagedResolvedAuthority> {
 				// authority = "codetap+<encodedSocketPath>"
 				const parts = authority.split('+');
 				if (parts.length < 2) {
-					throw vscode.RemoteAuthorityResolverError.NotAvailable(
+					throw remoteAuthorityResolverError.NotAvailable(
 						'Invalid codetap authority: ' + authority
 					);
 				}
@@ -27,14 +72,14 @@ export class CodetapResolverProvider {
 				}
 
 				// Create a managed authority using a socket connection factory
-				const makeConnection = (): Thenable<vscode.ManagedMessagePassing> => {
+				const makeConnection = (): Thenable<ManagedMessagePassing> => {
 					return new Promise((resolve, reject) => {
 						const socket = net.createConnection(socketPath, () => {
-							const reader = new vscode.EventEmitter<Buffer>();
+							const reader = new vscode.EventEmitter<Uint8Array>();
 							const writer = new vscode.EventEmitter<void>();
 
 							socket.on('data', (data: Buffer) => {
-								reader.fire(data);
+								reader.fire(new Uint8Array(data));
 							});
 
 							socket.on('close', () => {
@@ -48,7 +93,7 @@ export class CodetapResolverProvider {
 							resolve({
 								onDidReceiveMessage: reader.event,
 								onDidClose: writer.event,
-								send(data: Buffer): void {
+								send(data: Uint8Array): void {
 									socket.write(data);
 								},
 								end(): void {
@@ -60,7 +105,7 @@ export class CodetapResolverProvider {
 					});
 				};
 
-				const resolved = new vscode.ManagedResolvedAuthority(makeConnection);
+				const resolved = new managedResolvedAuthority(makeConnection);
 				if (connectionToken) {
 					resolved.connectionToken = connectionToken;
 				}
@@ -69,5 +114,6 @@ export class CodetapResolverProvider {
 		});
 
 		context.subscriptions.push(resolver);
+		return true;
 	}
 }

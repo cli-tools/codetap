@@ -51,6 +51,34 @@ make check    # vet + assert formatting (CI-oriented, non-modifying)
 
 `make check` is the read-only gate used by CI — it fails if any file is not `gofmt`-clean.
 
+## Pre-Submit Validation Checklist
+
+Do not push code that has not been validated locally first. CI should confirm quality, not discover basic compile, formatting, or test failures.
+
+Run this checklist before submitting code:
+
+```sh
+# Go validation
+make fmt
+make check
+make test
+make lint      # if golangci-lint is installed
+
+# Extension validation
+cd extension
+npm ci
+npm run compile
+npm run package
+```
+
+Minimum bar before submission:
+
+- No formatting diffs after `make fmt`
+- No Go compile/vet/lint errors
+- All Go unit tests pass
+- Extension TypeScript compile succeeds
+- VSIX packaging succeeds (`codetap.vsix` builds)
+
 ## CI/CD
 
 GitHub Actions pipeline (`.github/workflows/ci.yml`) triggers on pushes to `master`/`main`, pull requests, and version tags (`v*`).

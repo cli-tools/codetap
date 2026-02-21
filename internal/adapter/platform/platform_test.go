@@ -103,8 +103,12 @@ func TestResolveCommit_File(t *testing.T) {
 	t.Setenv("CODETAP_COMMIT", "")
 
 	commitDir := filepath.Join(tmpDir, ".codetap")
-	os.MkdirAll(commitDir, 0755)
-	os.WriteFile(filepath.Join(commitDir, ".commit"), []byte("file-commit\n"), 0644)
+	if err := os.MkdirAll(commitDir, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", commitDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(commitDir, ".commit"), []byte("file-commit\n"), 0644); err != nil {
+		t.Fatalf("write commit file: %v", err)
+	}
 
 	commit, err := p.ResolveCommit("")
 	if err != nil {

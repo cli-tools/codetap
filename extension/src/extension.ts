@@ -11,7 +11,12 @@ export function activate(context: vscode.ExtensionContext) {
 	const pollInterval = config.get<number>('pollInterval', 3000);
 
 	// Register the remote authority resolver for codetap:// URIs
-	CodetapResolverProvider.register(context);
+	const resolverAvailable = CodetapResolverProvider.register(context);
+	if (!resolverAvailable) {
+		void vscode.window.showWarningMessage(
+			'CodeTap remote connections are unavailable in this VS Code build.'
+		);
+	}
 
 	// Set up session watcher and tree view
 	const watcher = new SessionWatcher(socketDir, pollInterval);
@@ -25,6 +30,13 @@ export function activate(context: vscode.ExtensionContext) {
 		}),
 
 		vscode.commands.registerCommand('codetap.connect', async (session?: Session) => {
+			if (!resolverAvailable) {
+				vscode.window.showErrorMessage(
+					'CodeTap connect requires remote authority resolver support in VS Code.'
+				);
+				return;
+			}
+
 			if (!session) {
 				const sessions = await watcher.getSessions();
 				const alive = sessions.filter(s => s.alive);

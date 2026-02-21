@@ -71,10 +71,12 @@ func TestResolve_Semver(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "/api/update/server-linux-x64/stable/1.109.5") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(updateResponse{
+		if err := json.NewEncoder(w).Encode(updateResponse{
 			Version:        testCommit,
 			ProductVersion: "1.109.5",
-		})
+		}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer ts.Close()
 
@@ -93,10 +95,12 @@ func TestResolve_Latest(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "0000000000000000000000000000000000000000") {
 			t.Errorf("expected dummy hash in URL, got path: %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(updateResponse{
+		if err := json.NewEncoder(w).Encode(updateResponse{
 			Version:        testCommit,
 			ProductVersion: "1.109.5",
-		})
+		}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer ts.Close()
 
@@ -112,7 +116,9 @@ func TestResolve_Latest(t *testing.T) {
 
 func TestResolve_Latest_CaseInsensitive(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(updateResponse{Version: testCommit})
+		if err := json.NewEncoder(w).Encode(updateResponse{Version: testCommit}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer ts.Close()
 
@@ -144,7 +150,9 @@ func TestResolve_APIError(t *testing.T) {
 
 func TestResolve_APIBadJSON(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("not json"))
+		if _, err := w.Write([]byte("not json")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer ts.Close()
 
@@ -160,7 +168,9 @@ func TestResolve_APIBadJSON(t *testing.T) {
 
 func TestResolve_APIBadVersion(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(updateResponse{Version: "not-a-hash"})
+		if err := json.NewEncoder(w).Encode(updateResponse{Version: "not-a-hash"}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer ts.Close()
 
@@ -179,7 +189,9 @@ func TestResolve_ArchInURL(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "server-linux-arm64") {
 			t.Errorf("expected arm64 in URL, got: %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(updateResponse{Version: testCommit})
+		if err := json.NewEncoder(w).Encode(updateResponse{Version: testCommit}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer ts.Close()
 

@@ -15,13 +15,13 @@ func ContainerSide(r io.Reader, w io.Writer, serverSocket string, logger domain.
 	fw := NewFrameWriter(w)
 	conns := &sync.Map{} // map[uint32]net.Conn
 
-	// Read frames from stdin and dispatch
+	// Read frames from stdin and dispatch.
 	for {
 		frame, err := ReadFrame(r)
 		if err != nil {
-			// stdin closed — shut down all connections
+			// stdin closed - shut down all connections.
 			conns.Range(func(_, v any) bool {
-				v.(net.Conn).Close()
+				_ = v.(net.Conn).Close()
 				return true
 			})
 			if err == io.EOF {
@@ -32,26 +32,34 @@ func ContainerSide(r io.Reader, w io.Writer, serverSocket string, logger domain.
 
 		switch frame.Type {
 		case FrameOpen:
-			conn, err := net.Dial("unix", serverSocket)
-			if err != nil {
-				logger.Error("connect to server socket", "conn", frame.ConnID, "err", err)
-				fw.Write(Frame{Type: FrameClose, ConnID: frame.ConnID})
+			conn, dialErr := net.Dial("unix", serverSocket)
+			if dialErr != nil {
+				logger.Error("connect to server socket", "conn", frame.ConnID, "err", dialErr)
+				if writeErr := fw.Write(Frame{Type: FrameClose, ConnID: frame.ConnID}); writeErr != nil {
+					return writeErr
+				}
 				continue
 			}
 			conns.Store(frame.ConnID, conn)
 			logger.Info("connection opened", "conn", frame.ConnID)
 
-			// Read from server socket → write DATA frames to stdout
+			// Read from server socket -> write DATA frames to stdout.
 			go func(id uint32, c net.Conn) {
 				buf := make([]byte, 32*1024)
 				for {
-					n, err := c.Read(buf)
+					n, readErr := c.Read(buf)
 					if n > 0 {
-						fw.Write(Frame{Type: FrameData, ConnID: id, Data: buf[:n]})
+						if writeErr := fw.Write(Frame{Type: FrameData, ConnID: id, Data: buf[:n]}); writeErr != nil {
+							logger.Error("write DATA frame failed", "conn", id, "err", writeErr)
+							return
+						}
 					}
-					if err != nil {
-						fw.Write(Frame{Type: FrameClose, ConnID: id})
+					if readErr != nil {
+						if writeErr := fw.Write(Frame{Type: FrameClose, ConnID: id}); writeErr != nil {
+							logger.Error("write CLOSE frame failed", "conn", id, "err", writeErr)
+						}
 						conns.Delete(id)
+						_ = c.Close()
 						return
 					}
 				}
@@ -59,12 +67,20 @@ func ContainerSide(r io.Reader, w io.Writer, serverSocket string, logger domain.
 
 		case FrameData:
 			if v, ok := conns.Load(frame.ConnID); ok {
-				v.(net.Conn).Write(frame.Data)
+				conn := v.(net.Conn)
+				if _, writeErr := conn.Write(frame.Data); writeErr != nil {
+					logger.Error("write to server socket failed", "conn", frame.ConnID, "err", writeErr)
+					_ = conn.Close()
+					conns.Delete(frame.ConnID)
+					if closeFrameErr := fw.Write(Frame{Type: FrameClose, ConnID: frame.ConnID}); closeFrameErr != nil {
+						return closeFrameErr
+					}
+				}
 			}
 
 		case FrameClose:
 			if v, ok := conns.LoadAndDelete(frame.ConnID); ok {
-				v.(net.Conn).Close()
+				_ = v.(net.Conn).Close()
 				logger.Info("connection closed", "conn", frame.ConnID)
 			}
 		}

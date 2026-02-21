@@ -118,7 +118,9 @@ Flags:`)
 	folder := fs.String("folder", "", "workspace folder path (default: cwd)")
 	socketDir := fs.String("socket-dir", "", "socket directory (default: /dev/shm/codetap)")
 	stdio := fs.Bool("stdio", false, "relay traffic over stdin/stdout instead of /dev/shm")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fatal(err)
+	}
 
 	log := logger.NewStderr()
 
@@ -215,7 +217,9 @@ Flags:`)
 	}
 
 	socketDir := fs.String("socket-dir", "", "socket directory (default: /dev/shm/codetap)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fatal(err)
+	}
 
 	plat, err := platform.New()
 	if err != nil {
@@ -271,7 +275,9 @@ Flags:`)
 	}
 
 	socketDir := fs.String("socket-dir", "", "socket directory (default: /dev/shm/codetap)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fatal(err)
+	}
 
 	log := logger.NewStderr()
 
@@ -316,7 +322,9 @@ Flags:`)
 	commit := fs.String("commit", "", "commit hash for metadata")
 	folder := fs.String("folder", "", "workspace folder for metadata (default: cwd)")
 	socketDir := fs.String("socket-dir", "", "socket directory (default: /dev/shm/codetap)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fatal(err)
+	}
 
 	remaining := fs.Args()
 	if len(remaining) == 0 {
@@ -380,7 +388,9 @@ Flags:`)
 
 	defer func() {
 		log.Info("cleaning up relay session", "name", resolvedName)
-		st.Remove(resolvedName)
+		if err := st.Remove(resolvedName); err != nil {
+			log.Error("relay cleanup failed", "name", resolvedName, "err", err)
+		}
 	}()
 
 	if err := relay.HostSide(socketPath, remaining, log); err != nil {
@@ -393,7 +403,9 @@ func defaultName() string {
 		return h
 	}
 	b := make([]byte, 4)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("codetap-%d", time.Now().UnixNano())
+	}
 	return fmt.Sprintf("codetap-%x", b)
 }
 

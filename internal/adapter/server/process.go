@@ -45,7 +45,9 @@ func (r *ProcessRunner) Start(binPath, socketPath, token string) error {
 	go func() {
 		sig := <-sigCh
 		r.logger.Info("forwarding signal to code-server", "signal", sig)
-		cmd.Process.Signal(sig)
+		if err := cmd.Process.Signal(sig); err != nil {
+			r.logger.Error("forward signal failed", "signal", sig, "err", err)
+		}
 	}()
 
 	err := cmd.Wait()
