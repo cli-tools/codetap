@@ -1,0 +1,102 @@
+package relay
+
+import (
+	"bytes"
+	"testing"
+)
+
+func TestFrameRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		f    Frame
+	}{
+		{"open", Frame{Type: FrameOpen, ConnID: 1}},
+		{"close", Frame{Type: FrameClose, ConnID: 42}},
+		{"data", Frame{Type: FrameData, ConnID: 7, Data: []byte("hello world")}},
+		{"empty data", Frame{Type: FrameData, ConnID: 0, Data: nil}},
+		{"large conn id", Frame{Type: FrameData, ConnID: 0xFFFFFFFF, Data: []byte("x")}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := WriteFrame(&buf, tt.f); err != nil {
+				t.Fatalf("WriteFrame: %v", err)
+			}
+
+			got, err := ReadFrame(&buf)
+			if err != nil {
+				t.Fatalf("ReadFrame: %v", err)
+			}
+
+			if got.Type != tt.f.Type {
+				t.Errorf("Type = %d, want %d", got.Type, tt.f.Type)
+			}
+			if got.ConnID != tt.f.ConnID {
+				t.Errorf("ConnID = %d, want %d", got.ConnID, tt.f.ConnID)
+			}
+			if !bytes.Equal(got.Data, tt.f.Data) {
+				t.Errorf("Data = %q, want %q", got.Data, tt.f.Data)
+			}
+		})
+	}
+}
+
+func TestFrameMultipleRoundTrips(t *testing.T) {
+	var buf bytes.Buffer
+
+	frames := []Frame{
+		{Type: FrameOpen, ConnID: 1},
+		{Type: FrameData, ConnID: 1, Data: []byte("first")},
+		{Type: FrameData, ConnID: 2, Data: []byte("second")},
+		{Type: FrameClose, ConnID: 1},
+	}
+
+	for _, f := range frames {
+		if err := WriteFrame(&buf, f); err != nil {
+			t.Fatalf("WriteFrame: %v", err)
+		}
+	}
+
+	for i, want := range frames {
+		got, err := ReadFrame(&buf)
+		if err != nil {
+			t.Fatalf("ReadFrame[%d]: %v", i, err)
+		}
+		if got.Type != want.Type || got.ConnID != want.ConnID {
+			t.Errorf("frame %d: got (%d, %d), want (%d, %d)",
+				i, got.Type, got.ConnID, want.Type, want.ConnID)
+		}
+		if !bytes.Equal(got.Data, want.Data) {
+			t.Errorf("frame %d data: got %q, want %q", i, got.Data, want.Data)
+		}
+	}
+}
+
+func TestFrameWriter_ConcurrentSafety(t *testing.T) {
+	var buf bytes.Buffer
+	fw := NewFrameWriter(&buf)
+
+	done := make(chan struct{})
+	for i := 0; i < 10; i++ {
+		go func(id uint32) {
+			fw.Write(Frame{Type: FrameData, ConnID: id, Data: []byte("test")})
+			done <- struct{}{}
+		}(uint32(i))
+	}
+
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// Read all 10 frames back
+	for i := 0; i < 10; i++ {
+		f, err := ReadFrame(&buf)
+		if err != nil {
+			t.Fatalf("ReadFrame[%d]: %v", i, err)
+		}
+		if f.Type != FrameData {
+			t.Errorf("frame %d: type = %d, want %d", i, f.Type, FrameData)
+		}
+	}
+}

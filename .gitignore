@@ -1,0 +1,11 @@
+# Binaries
+/codetap
+/codetap-linux-*
+
+# Extension build output
+extension/out/
+extension/node_modules/
+extension/*.vsix
+
+# IDE / tool config
+.claude/

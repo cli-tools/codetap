@@ -1,0 +1,99 @@
+{
+  "name": "codetap",
+  "displayName": "CodeTap",
+  "description": "Discover and connect to CodeTap VS Code Server sessions in containers",
+  "version": "0.1.0",
+  "publisher": "codetap",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.87.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codetap",
+          "title": "CodeTap",
+          "icon": "$(remote)"
+        }
+      ]
+    },
+    "views": {
+      "codetap": [
+        {
+          "id": "codetap.sessions",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codetap.connect",
+        "title": "CodeTap: Connect to Session",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "codetap.refresh",
+        "title": "CodeTap: Refresh Sessions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codetap.copyToken",
+        "title": "CodeTap: Copy Connection Token"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "codetap.refresh",
+          "when": "view == codetap.sessions",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codetap.connect",
+          "when": "view == codetap.sessions && viewItem == aliveSession",
+          "group": "inline"
+        },
+        {
+          "command": "codetap.copyToken",
+          "when": "view == codetap.sessions && viewItem == aliveSession"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "CodeTap",
+      "properties": {
+        "codetap.socketDir": {
+          "type": "string",
+          "default": "/dev/shm/codetap",
+          "description": "Directory to scan for CodeTap session sockets"
+        },
+        "codetap.pollInterval": {
+          "type": "number",
+          "default": 3000,
+          "description": "Polling interval in milliseconds for session discovery"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --out codetap.vsix"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.87.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
