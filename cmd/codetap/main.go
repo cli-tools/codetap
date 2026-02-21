@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -363,15 +364,9 @@ Flags:`)
 	}
 
 	arch, _ := plat.DetectArch()
-
-	tg := token.NewRandomGenerator()
-	tok, err := tg.Generate()
-	if err != nil {
-		fatal(err)
-	}
-
-	if err := st.WriteToken(resolvedName, tok); err != nil {
-		fatal(err)
+	tokenPath := filepath.Join(sockDir, resolvedName+".token")
+	if err := os.Remove(tokenPath); err != nil && !os.IsNotExist(err) {
+		fatal(fmt.Errorf("remove stale token: %w", err))
 	}
 
 	meta := domain.Metadata{

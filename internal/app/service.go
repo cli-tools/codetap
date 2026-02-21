@@ -146,12 +146,6 @@ func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer) error 
 		return err
 	}
 
-	// Generate token for the server
-	token, err := s.tokenGen.Generate()
-	if err != nil {
-		return fmt.Errorf("token: %w", err)
-	}
-
 	// Use a temp socket inside the container
 	tmpSocket := fmt.Sprintf("/tmp/codetap-%d.sock", os.Getpid())
 	if err := os.Remove(tmpSocket); err != nil && !os.IsNotExist(err) {
@@ -161,7 +155,9 @@ func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer) error 
 	// Start server in background goroutine
 	serverErr := make(chan error, 1)
 	go func() {
-		serverErr <- s.runner.Start(binPath, tmpSocket, token)
+		// In stdio relay mode we do not use a connection token. The host side
+		// tunnel already scopes access to the local Unix socket.
+		serverErr <- s.runner.Start(binPath, tmpSocket, "")
 	}()
 
 	// Wait for the server socket to appear
