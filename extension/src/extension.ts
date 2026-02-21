@@ -14,7 +14,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const resolverAvailable = CodetapResolverProvider.register(context);
 	if (!resolverAvailable) {
 		void vscode.window.showWarningMessage(
-			'CodeTap remote connections are unavailable in this VS Code build.'
+			'CodeTap remote connections require resolver API access. Launch VS Code with: --enable-proposed-api codetap.codetap'
 		);
 	}
 

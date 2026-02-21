@@ -2,6 +2,19 @@
 
 CodeTap discovers and connects to running CodeTap VS Code Server sessions.
 
+> Note: this extension uses the VS Code resolver API proposal.
+> One-time setup on stable VS Code:
+> 1. Run `Preferences: Configure Runtime Arguments`.
+> 2. Add this to `argv.json`:
+>    ```json
+>    {
+>      "enable-proposed-api": ["codetap.codetap"]
+>    }
+>    ```
+> 3. Restart VS Code.
+> Flatpak `argv.json` path:
+> `~/.var/app/com.visualstudio.code/config/Code/argv.json`
+
 ## Features
 
 - Sidebar session list with alive/dead status

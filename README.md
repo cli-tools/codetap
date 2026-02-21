@@ -160,6 +160,19 @@ Running bare `codetap run` with network access downloads the latest stable serve
 
 The companion TypeScript extension (`extension/`) turns VS Code into a CodeTap client. It registers a `codetap` remote authority, polls the socket directory for `.json` metadata files, and presents discovered sessions in a sidebar tree view with live/dead status indicators. Connecting opens the remote folder over the Unix socket using VS Code's managed message-passing protocol — no port forwarding or SSH required.
 
+> Note: `codetap` uses the VS Code resolver API proposal.
+> One-time setup on stable VS Code:
+> 1. Run `Preferences: Configure Runtime Arguments`.
+> 2. Add this to `argv.json`:
+>    ```json
+>    {
+>      "enable-proposed-api": ["codetap.codetap"]
+>    }
+>    ```
+> 3. Restart VS Code.
+> Flatpak `argv.json` path:
+> `~/.var/app/com.visualstudio.code/config/Code/argv.json`
+
 **Commands:** `codetap.connect` (open session), `codetap.refresh` (re-scan), `codetap.copyToken` (copy auth token to clipboard).
 
 | Setting | Default | Description |
