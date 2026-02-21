@@ -15,16 +15,16 @@ CodeTap bridges VS Code on the host with containers, VMs, and remote machines. I
 ## Overview
 
 ```
-┌─────────────────────┐         /dev/shm/codetap/
-│  VS Code (host)     │◄────────  session.sock
-│  + CodeTap ext      │           session.json
-└─────────────────────┘           session.token
-                                      ▲
-                                      │ (ipc=host or stdio relay)
-                               ┌──────┴──────┐
-                               │  Container   │
-                               │  codetap run │
-                               └──────────────┘
+┌─────────────────────┐       /dev/shm/codetap/
+│  VS Code (host)     │◄──────  session.sock
+│  + CodeTap ext      │         session.json
+└─────────────────────┘         session.token
+                                    ▲
+                                    │ (ipc=host or stdio relay)
+                             ┌──────┴──────┐
+                             │  Container   │
+                             │  codetap run │
+                             └──────────────┘
 ```
 
 ## Installation
@@ -181,6 +181,87 @@ The companion TypeScript extension (`extension/`) turns VS Code into a CodeTap c
 | `codetap.pollInterval` | `3000` | Polling interval in milliseconds |
 
 Build: `cd extension && npm ci && npm run compile && npm run package`
+
+## Replacing devcontainers with Docker Compose + CodeTap
+
+VS Code Dev Containers couple your container lifecycle to the IDE. Docker Compose + CodeTap gives you the same remote-development experience with plain Docker tooling — no Dev Containers extension, no `devcontainer.json`, no IDE lock-in.
+
+### The pattern
+
+1. **`compose.yaml` runs CodeTap as the container entrypoint** with stdin open and no TTY:
+
+```yaml
+services:
+  myservice:
+    image: myimage:latest
+    container_name: myservice
+    stdin_open: true   # keep stdin pipe open (-i)
+    tty: false         # no pseudo-TTY (critical for stdio relay)
+    command: ~/.local/bin/codetap run --stdio
+    # ... volumes, environment, etc.
+```
+
+2. **Start the container** with `docker compose up -d`. The container launches CodeTap in stdio mode and waits for a relay connection on stdin.
+
+3. **Attach from the host** using `codetap relay` + `docker attach`:
+
+```sh
+codetap relay --name myservice -- docker attach myservice
+```
+
+`docker attach` connects to the main process's stdin/stdout — exactly the stdio pipe that `codetap run --stdio` expects. The relay creates the `/dev/shm/codetap/` socket and the VS Code extension discovers it.
+
+### Why this works
+
+| Docker Compose key | Effect |
+|---------------------|--------|
+| `stdin_open: true` | Keeps the container's stdin file descriptor open (equivalent to `docker run -i`) |
+| `tty: false` | No PTY allocation — raw byte stream, which is what the stdio multiplexer needs |
+
+The combination gives CodeTap a clean bidirectional pipe. `docker attach` hooks into that same pipe without spawning a new process (unlike `docker exec`).
+
+### Comparison with devcontainers
+
+| | Dev Containers | Compose + CodeTap |
+|---|---|---|
+| IDE dependency | VS Code only | Any editor (VS Code via extension, others via socket) |
+| Config files | `devcontainer.json` + Dockerfile | `compose.yaml` (you already have one) |
+| Container lifecycle | Managed by IDE | Managed by `docker compose` |
+| Multi-service | Awkward | Native — compose was built for this |
+| CI reuse | Requires special tooling | Same `compose.yaml` runs in CI unchanged |
+| Attach/detach | Kills session | Relay reconnects; container keeps running |
+
+### Full example
+
+```yaml
+services:
+  dev:
+    image: registry.example.com/myteam/devimage:latest
+    container_name: dev
+    user: ${USER}
+    network_mode: host
+    ipc: host
+    volumes:
+      - /etc/passwd:/etc/passwd:ro
+      - $HOME:$HOME
+      - ..:/workspaces
+    working_dir: /workspaces/myproject
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+    stdin_open: true
+    tty: false
+    command: ~/.local/bin/codetap run --stdio
+
+volumes:
+  shared-data:
+    external: true
+```
+
+```sh
+docker compose up -d
+codetap relay --name dev -- docker attach dev
+# VS Code discovers the session and connects
+```
 
 ## Building from source
 
