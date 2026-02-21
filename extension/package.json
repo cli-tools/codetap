@@ -2,7 +2,7 @@
   "name": "codetap",
   "displayName": "CodeTap",
   "description": "Discover and connect to CodeTap VS Code Server sessions in containers",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "codetap",
   "license": "0BSD",
   "repository": {

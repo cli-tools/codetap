@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as net from 'net';
+import * as path from 'path';
 
 type ManagedMessagePassing = {
 	onDidReceiveMessage: vscode.Event<Uint8Array>;
@@ -23,10 +24,30 @@ type ResolverErrorFactory = {
 	NotAvailable(message: string): Error;
 };
 
+type ResourceLabelFormatting = {
+	label: string;
+	separator: '/' | '\\' | '';
+	tildify?: boolean;
+	normalizeDriveLetter?: boolean;
+	workspaceSuffix?: string;
+	workspaceTooltip?: string;
+	authorityPrefix?: string;
+	stripPathStartingSeparator?: boolean;
+};
+
+type ResourceLabelFormatter = {
+	scheme: string;
+	authority?: string;
+	formatting: ResourceLabelFormatting;
+};
+
 type RemoteResolverAPI = {
 	registerRemoteAuthorityResolver?: (
 		authorityPrefix: string,
 		resolver: { resolve(authority: string): Thenable<ManagedResolvedAuthority> }
+	) => vscode.Disposable;
+	registerResourceLabelFormatter?: (
+		formatter: ResourceLabelFormatter
 	) => vscode.Disposable;
 };
 
@@ -41,6 +62,7 @@ export class CodetapResolverProvider {
 		const resolverAPI = vscode as unknown as VscodeResolverAPI;
 
 		const registerRemoteAuthorityResolver = workspaceAPI.registerRemoteAuthorityResolver;
+		const registerResourceLabelFormatter = workspaceAPI.registerResourceLabelFormatter;
 		const managedResolvedAuthority = resolverAPI.ManagedResolvedAuthority;
 		const remoteAuthorityResolverError = resolverAPI.RemoteAuthorityResolverError;
 		if (
@@ -52,6 +74,39 @@ export class CodetapResolverProvider {
 		}
 
 		try {
+			const dynamicHostFormatters = new Map<string, vscode.Disposable>();
+
+			const registerHostLabelFormatter = (
+				authority: string,
+				socketPath: string
+			): void => {
+				if (!registerResourceLabelFormatter) {
+					return;
+				}
+				if (dynamicHostFormatters.has(authority)) {
+					return;
+				}
+
+				const socketName = path.basename(socketPath, '.sock');
+				const formatter = registerResourceLabelFormatter({
+					scheme: 'vscode-remote',
+					authority,
+					formatting: {
+						label: '${path}',
+						separator: '/',
+						workspaceSuffix: `codetap(${socketName})`
+					}
+				});
+
+				dynamicHostFormatters.set(authority, formatter);
+				context.subscriptions.push({
+					dispose: () => {
+						dynamicHostFormatters.delete(authority);
+						formatter.dispose();
+					}
+				});
+			};
+
 			// Register the codetap remote authority resolver.
 			// URI format: vscode-remote://codetap+<encodedSocketPath>/<folder>
 			const resolver = registerRemoteAuthorityResolver('codetap', {
@@ -64,6 +119,7 @@ export class CodetapResolverProvider {
 						);
 					}
 					const socketPath = decodeURIComponent(parts.slice(1).join('+'));
+					registerHostLabelFormatter(authority, socketPath);
 
 					// Read the connection token from the paired .token file
 					const tokenPath = socketPath.replace(/\.sock$/, '.token');
@@ -146,6 +202,19 @@ export class CodetapResolverProvider {
 			});
 
 			context.subscriptions.push(resolver);
+			if (registerResourceLabelFormatter) {
+				// Fallback label before a specific session authority is resolved.
+				const formatter = registerResourceLabelFormatter({
+					scheme: 'vscode-remote',
+					authority: 'codetap+*',
+					formatting: {
+						label: '${path}',
+						separator: '/',
+						workspaceSuffix: 'codetap'
+					}
+				});
+				context.subscriptions.push(formatter);
+			}
 			return true;
 		} catch {
 			// Stable builds can reject this API (proposal: resolvers).
