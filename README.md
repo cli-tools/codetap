@@ -21,7 +21,7 @@ CodeTap bridges VS Code on the host with containers, VMs, and remote machines. I
 └─────────────────────┘         session.token
                                     ▲
                                     │ (ipc=host or stdio relay)
-                             ┌──────┴──────┐
+                             ┌──────┴───────┐
                              │  Container   │
                              │  codetap run │
                              └──────────────┘
@@ -91,7 +91,7 @@ codetap relay --name k8s-pod -- \
 
 #### Init phase (automatic commit negotiation)
 
-When the relay starts, it waits (up to 30 seconds) for the VS Code extension to write a `.commit` file containing the client's exact VS Code Server commit hash. The relay then sends this commit to the remote side in a `FrameInit` message. The remote provisions the matching VS Code Server version and acknowledges before any connections are accepted. This eliminates version mismatch errors entirely.
+When the relay starts, it waits for the VS Code extension to write a `.commit` file containing the client's exact VS Code Server commit hash. The relay then sends this commit to the remote side in a `FrameInit` message. The remote provisions the matching VS Code Server version and acknowledges before any connections are accepted. This eliminates version mismatch errors entirely.
 
 ### Listing sessions
 
