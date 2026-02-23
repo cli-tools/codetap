@@ -58,8 +58,9 @@ jobs:
           go-version: '1.22'
       - name: Build static binary
         run: |
+          VERSION=${GITHUB_REF_NAME:-dev}
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -ldflags '-s -w' \
+            go build -ldflags "-s -w -X main.version=${VERSION}" \
             -o codetap-${{ matrix.goos }}-${{ matrix.goarch }} \
             ./cmd/codetap
       - name: Verify static linking
