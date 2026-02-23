@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,90 @@ func TestFrameMultipleRoundTrips(t *testing.T) {
 		if !bytes.Equal(got.Data, want.Data) {
 			t.Errorf("frame %d data: got %q, want %q", i, got.Data, want.Data)
 		}
+	}
+}
+
+func TestReadFrame_TextError(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantSub string // substring expected in error
+	}{
+		{
+			"docker exec error",
+			`OCI runtime exec failed: exec failed: unable to start container process: exec: "/root/.local/bin/codetap": no such file or directory`,
+			"OCI runtime exec failed",
+		},
+		{
+			"bash not found",
+			"bash: /root/.local/bin/codetap: No such file or directory\n",
+			"No such file or directory",
+		},
+		{
+			"permission denied",
+			"Permission denied (publickey,password).\r\n",
+			"Permission denied",
+		},
+		{
+			"ssh error",
+			"ssh: connect to host rat2 port 22: Connection refused\n",
+			"Connection refused",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := bytes.NewBufferString(tt.input)
+			_, err := ReadFrame(buf)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantSub) {
+				t.Errorf("error %q does not contain %q", err.Error(), tt.wantSub)
+			}
+			if !strings.Contains(err.Error(), "remote command wrote text") {
+				t.Errorf("error %q missing user-friendly prefix", err.Error())
+			}
+		})
+	}
+}
+
+func TestReadFrame_BinaryGarbage(t *testing.T) {
+	// 9 bytes of non-text binary with invalid frame type
+	buf := bytes.NewBuffer([]byte{0xFF, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01})
+	_, err := ReadFrame(buf)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if strings.Contains(err.Error(), "remote command wrote text") {
+		t.Error("binary garbage should not be reported as text")
+	}
+	if !strings.Contains(err.Error(), "invalid frame") {
+		t.Errorf("expected 'invalid frame' error, got: %v", err)
+	}
+}
+
+func TestLooksLikeText(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{"ascii text", []byte("hello world"), true},
+		{"error message", []byte("bash: command not found\n"), true},
+		{"binary", []byte{0x01, 0x00, 0x00, 0x00, 0x05, 0xFF, 0xFE, 0x80}, false},
+		{"empty", nil, false},
+		{"mostly text", []byte("error\x00message"), true},  // 11/13 = 84%
+		{"mostly binary", []byte{0x01, 0x02, 0x03, 'a'}, false}, // 1/4 = 25%
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := looksLikeText(tt.data)
+			if got != tt.want {
+				t.Errorf("looksLikeText(%q) = %v, want %v", tt.data, got, tt.want)
+			}
+		})
 	}
 }
 
