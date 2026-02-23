@@ -85,13 +85,14 @@ func HostSide(socketPath string, command []string, commitFilePath string, onInit
 	logger.Info("subprocess started", "pid", cmd.Process.Pid)
 
 	// Forward signals to subprocess
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
-		sig := <-sigCh
-		logger.Info("forwarding signal", "signal", sig)
-		if err := cmd.Process.Signal(sig); err != nil {
-			logger.Error("forward signal failed", "signal", sig, "err", err)
+		for sig := range sigCh {
+			logger.Info("forwarding signal", "signal", sig)
+			if err := cmd.Process.Signal(sig); err != nil {
+				logger.Error("forward signal failed", "signal", sig, "err", err)
+			}
 		}
 	}()
 
@@ -202,5 +203,6 @@ func HostSide(socketPath string, command []string, commitFilePath string, onInit
 	})
 
 	signal.Stop(sigCh)
+	close(sigCh)
 	return cmd.Wait()
 }

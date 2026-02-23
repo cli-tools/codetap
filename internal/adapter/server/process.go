@@ -54,20 +54,22 @@ func (r *ProcessRunner) Start(binPath, socketPath, token string) (func() error, 
 	r.logger.Info("code-server started", "pid", pgid, "socket", socketPath)
 
 	// Forward signals to the process group
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
-		sig := <-sigCh
-		r.logger.Info("forwarding signal to code-server process group", "signal", sig, "pgid", pgid)
-		// Negative pid signals the entire process group
-		if err := syscall.Kill(-pgid, sig.(syscall.Signal)); err != nil {
-			r.logger.Error("forward signal failed", "signal", sig, "err", err)
+		for sig := range sigCh {
+			r.logger.Info("forwarding signal to code-server process group", "signal", sig, "pgid", pgid)
+			// Negative pid signals the entire process group
+			if err := syscall.Kill(-pgid, sig.(syscall.Signal)); err != nil {
+				r.logger.Error("forward signal failed", "signal", sig, "err", err)
+			}
 		}
 	}()
 
 	wait := func() error {
 		err := cmd.Wait()
 		signal.Stop(sigCh)
+		close(sigCh)
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				return fmt.Errorf("code-server exited with code %d", exitErr.ExitCode())
