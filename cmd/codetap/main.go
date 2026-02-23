@@ -23,6 +23,9 @@ import (
 	"codetap/internal/domain"
 )
 
+// version is set at build time via -ldflags '-X main.version=...'
+var version = "dev"
+
 const usage = `codetap — VS Code Server for containers
 
 Usage:
@@ -75,6 +78,9 @@ func main() {
 	arg := os.Args[1]
 
 	switch arg {
+	case "-v", "-version", "--version", "version":
+		fmt.Println(version)
+		os.Exit(0)
 	case "-h", "-help", "--help", "help":
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(0)

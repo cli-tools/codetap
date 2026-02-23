@@ -2,7 +2,8 @@ BINARY   := codetap
 GOROOT   := /opt/go
 GO       := $(GOROOT)/bin/go
 GOFLAGS  := CGO_ENABLED=0 GOROOT=$(GOROOT)
-LDFLAGS  := -s -w
+VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS  := -s -w -X main.version=$(VERSION)
 
 .PHONY: help build test clean build-all fmt vet lint check
 .DEFAULT_GOAL := help
