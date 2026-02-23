@@ -21,9 +21,10 @@ func NewProcessRunner(logger domain.Logger) *ProcessRunner {
 }
 
 // Start launches code-server on the given Unix socket with the given token.
-// It blocks until the process exits. Signals (SIGINT, SIGTERM) are forwarded
-// to the child process.
-func (r *ProcessRunner) Start(binPath, socketPath, token string) error {
+// It returns a wait function that blocks until the process exits and a stop
+// function that sends SIGTERM to the entire process group (sh + node).
+// Signals (SIGINT, SIGTERM) received by codetap are forwarded to the process group.
+func (r *ProcessRunner) Start(binPath, socketPath, token string) (func() error, func(), error) {
 	args := []string{
 		"--socket-path=" + socketPath,
 		"--accept-server-license-terms",
@@ -42,32 +43,46 @@ func (r *ProcessRunner) Start(binPath, socketPath, token string) error {
 	// Do not share stdin with code-server. In stdio relay mode stdin carries
 	// framed transport data and must remain exclusive to the relay reader.
 	cmd.Stdin = nil
+	// Put the child in its own process group so we can kill sh + node together.
+	cmd.SysProcAttr = sysProcAttr()
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start code-server: %w", err)
+		return nil, nil, fmt.Errorf("start code-server: %w", err)
 	}
 
-	r.logger.Info("code-server started", "pid", cmd.Process.Pid, "socket", socketPath)
+	pgid := cmd.Process.Pid
+	r.logger.Info("code-server started", "pid", pgid, "socket", socketPath)
 
-	// Forward signals to child
+	// Forward signals to the process group
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		r.logger.Info("forwarding signal to code-server", "signal", sig)
-		if err := cmd.Process.Signal(sig); err != nil {
+		r.logger.Info("forwarding signal to code-server process group", "signal", sig, "pgid", pgid)
+		// Negative pid signals the entire process group
+		if err := syscall.Kill(-pgid, sig.(syscall.Signal)); err != nil {
 			r.logger.Error("forward signal failed", "signal", sig, "err", err)
 		}
 	}()
 
-	err := cmd.Wait()
-	signal.Stop(sigCh)
-
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return fmt.Errorf("code-server exited with code %d", exitErr.ExitCode())
+	wait := func() error {
+		err := cmd.Wait()
+		signal.Stop(sigCh)
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				return fmt.Errorf("code-server exited with code %d", exitErr.ExitCode())
+			}
+			return fmt.Errorf("code-server: %w", err)
 		}
-		return fmt.Errorf("code-server: %w", err)
+		return nil
 	}
-	return nil
+
+	stop := func() {
+		r.logger.Info("stopping code-server process group", "pgid", pgid)
+		if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+			r.logger.Error("kill process group failed", "pgid", pgid, "err", err)
+		}
+	}
+
+	return wait, stop, nil
 }

@@ -52,12 +52,18 @@ type mockRunner struct {
 	lastToken  string
 }
 
-func (m *mockRunner) Start(bin, sock, token string) error {
+func (m *mockRunner) Start(bin, sock, token string) (func() error, func(), error) {
 	m.called = true
 	m.lastBin = bin
 	m.lastSocket = sock
 	m.lastToken = token
-	return m.startFn(bin, sock, token)
+	err := m.startFn(bin, sock, token)
+	if err != nil {
+		return nil, nil, err
+	}
+	wait := func() error { return nil }
+	stop := func() {}
+	return wait, stop, nil
 }
 
 // mockStore is an in-memory MetadataStore.

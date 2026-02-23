@@ -110,8 +110,13 @@ func (s *Service) Run(cfg Config) error {
 		}
 	}()
 
-	// Start server — blocks until process exits
-	return s.runner.Start(binPath, socketPath, token)
+	// Start server
+	wait, _, err := s.runner.Start(binPath, socketPath, token)
+	if err != nil {
+		return err
+	}
+	// Block until process exits
+	return wait()
 }
 
 // List returns all discovered session entries.
@@ -184,16 +189,24 @@ func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer, resolv
 		return fmt.Errorf("remove stale temp socket: %w", err)
 	}
 
-	// Start server in background goroutine
+	// Start server — non-blocking
+	// In stdio relay mode we do not use a connection token. The host side
+	// tunnel already scopes access to the local Unix socket.
+	wait, stop, err := s.runner.Start(binPath, tmpSocket, "")
+	if err != nil {
+		return err
+	}
+
+	// Collect server exit status in background
 	serverErr := make(chan error, 1)
 	go func() {
-		// In stdio relay mode we do not use a connection token. The host side
-		// tunnel already scopes access to the local Unix socket.
-		serverErr <- s.runner.Start(binPath, tmpSocket, "")
+		serverErr <- wait()
 	}()
 
 	// Wait for the server socket to appear
 	if err := waitForSocket(tmpSocket); err != nil {
+		stop()
+		<-serverErr
 		return fmt.Errorf("server failed to start: %w", err)
 	}
 	s.logger.Info("server ready, starting relay", "socket", tmpSocket)
@@ -203,6 +216,8 @@ func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer, resolv
 		if err := relay.WriteFrame(stdout, relay.Frame{
 			Type: relay.FrameInit, ConnID: 0, Data: []byte(commit),
 		}); err != nil {
+			stop()
+			<-serverErr
 			return fmt.Errorf("write init ack: %w", err)
 		}
 		s.logger.Info("init ack sent", "commit", commit)
@@ -219,6 +234,10 @@ func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer, resolv
 	case err := <-serverErr:
 		return err
 	case err := <-relayErr:
+		// Relay ended (e.g. host relay killed, SSH dropped) — kill code-server
+		s.logger.Info("relay ended, stopping code-server")
+		stop()
+		<-serverErr
 		return err
 	}
 }

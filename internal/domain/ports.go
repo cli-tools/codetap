@@ -19,9 +19,10 @@ type Provisioner interface {
 }
 
 // ServerRunner starts the VS Code Server process on a Unix socket.
-// Start blocks until the process exits.
+// Start launches the process and returns a wait function that blocks until the
+// process exits and a stop function that terminates the process group.
 type ServerRunner interface {
-	Start(binPath, socketPath, token string) error
+	Start(binPath, socketPath, token string) (wait func() error, stop func(), err error)
 }
 
 // MetadataStore persists and reads socket metadata and connection tokens.
