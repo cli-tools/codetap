@@ -147,7 +147,7 @@ func TestLooksLikeText(t *testing.T) {
 		{"error message", []byte("bash: command not found\n"), true},
 		{"binary", []byte{0x01, 0x00, 0x00, 0x00, 0x05, 0xFF, 0xFE, 0x80}, false},
 		{"empty", nil, false},
-		{"mostly text", []byte("error\x00message"), true},  // 11/13 = 84%
+		{"mostly text", []byte("error\x00message"), true},       // 11/13 = 84%
 		{"mostly binary", []byte{0x01, 0x02, 0x03, 'a'}, false}, // 1/4 = 25%
 	}
 
