@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import { SessionProvider } from './sessionProvider';
 import { SessionWatcher } from './sessionWatcher';
 import { CodetapResolverProvider } from './resolver';
@@ -67,19 +66,6 @@ export function activate(context: vscode.ExtensionContext) {
 			await vscode.commands.executeCommand('vscode.openFolder', uri, {
 				forceNewWindow: false
 			});
-		}),
-
-		vscode.commands.registerCommand('codetap.copyToken', async (session?: Session) => {
-			if (!session) {
-				return;
-			}
-			try {
-				const token = fs.readFileSync(session.tokenPath, 'utf-8').trim();
-				await vscode.env.clipboard.writeText(token);
-				vscode.window.showInformationMessage('Connection token copied to clipboard.');
-			} catch (err) {
-				vscode.window.showErrorMessage(`Cannot read token: ${err}`);
-			}
 		}),
 	);
 

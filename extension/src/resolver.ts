@@ -77,6 +77,62 @@ function getVSCodeCommit(): string | undefined {
 	return undefined;
 }
 
+// Active control socket leases keyed by authority string.
+const activeLeases = new Map<string, net.Socket>();
+
+/**
+ * Perform the CTAP1 CONNECT handshake on a control socket.
+ * Returns the connection token and keeps the socket open as a lease.
+ */
+function ctapConnect(
+	ctlSocketPath: string,
+	commitHash: string,
+	clientId: string,
+	authority: string,
+): Promise<{ token: string; ctlConn: net.Socket }> {
+	return new Promise((resolve, reject) => {
+		const conn = net.createConnection(ctlSocketPath, () => {
+			conn.write(`CTAP1 CONNECT ${commitHash} ${clientId}\n`);
+		});
+
+		let data = '';
+		conn.on('data', (chunk: Buffer) => {
+			data += chunk.toString();
+			if (data.includes('\n')) {
+				const line = data.split('\n')[0].trim();
+				if (line.startsWith('OK')) {
+					const token = line.substring(3) || '';
+					// Clear the CONNECT timeout so the lease stays open.
+					conn.setTimeout(0);
+					// Close any existing lease for this authority.
+					const old = activeLeases.get(authority);
+					if (old) {
+						old.destroy();
+					}
+					activeLeases.set(authority, conn);
+					resolve({ token, ctlConn: conn });
+				} else if (line.startsWith('ERR ')) {
+					conn.destroy();
+					reject(new Error(line.substring(4)));
+				} else {
+					conn.destroy();
+					reject(new Error('Unexpected response: ' + line));
+				}
+			}
+		});
+
+		conn.on('error', (err: Error) => {
+			reject(err);
+		});
+
+		// Allow generous timeout for version switch (provisioning may take time).
+		conn.setTimeout(120_000, () => {
+			conn.destroy();
+			reject(new Error('CONNECT timeout'));
+		});
+	});
+}
+
 export class CodetapResolverProvider {
 	static register(context: vscode.ExtensionContext): boolean {
 		const workspaceAPI = vscode.workspace as unknown as RemoteResolverAPI;
@@ -142,99 +198,110 @@ export class CodetapResolverProvider {
 					const socketPath = decodeURIComponent(parts.slice(1).join('+'));
 					registerHostLabelFormatter(authority, socketPath);
 
-					// Write the VS Code commit hash so the relay can negotiate
-					// the correct VS Code Server version with the remote side.
+					// Derive the control socket path from the data socket path.
+					const ctlSocketPath = socketPath.replace(/\.sock$/, '.ctl.sock');
+
 					const commitHash = getVSCodeCommit();
-					if (commitHash) {
-						const commitPath = socketPath.replace(/\.sock$/, '.commit');
-						try {
-							fs.writeFileSync(commitPath, commitHash + '\n', { mode: 0o644 });
-						} catch {
-							// Best effort — relay may already have a commit
-						}
+					if (!commitHash) {
+						throw remoteAuthorityResolverError.NotAvailable(
+							'Cannot determine VS Code commit hash'
+						);
 					}
 
-					// Read the connection token from the paired .token file
-					const tokenPath = socketPath.replace(/\.sock$/, '.token');
-					let connectionToken: string | undefined;
-					try {
-						connectionToken = fs.readFileSync(tokenPath, 'utf-8').trim();
-					} catch {
-						// Token might not exist; server may use --without-connection-token
-					}
+					const clientId = String(process.pid);
 
-					// Create a managed authority using a socket connection factory
-					const makeConnection = (): Thenable<ManagedMessagePassing> => {
-						return new Promise((resolve, reject) => {
-							const socket = net.createConnection(socketPath, () => {
-								const reader = new vscode.EventEmitter<Uint8Array>();
-								const ended = new vscode.EventEmitter<void>();
-								const closed = new vscode.EventEmitter<Error | undefined>();
-								let done = false;
-								const finish = (err?: Error): void => {
-									if (done) {
-										return;
-									}
-									done = true;
-									ended.fire();
-									closed.fire(err);
-									reader.dispose();
-									ended.dispose();
-									closed.dispose();
-								};
-
-								socket.on('data', (data: Buffer) => {
-									reader.fire(new Uint8Array(data));
-								});
-
-								socket.on('end', () => {
-									finish();
-								});
-
-								socket.on('close', (hadError: boolean) => {
-									if (!hadError) {
-										finish();
-									}
-								});
-
-								socket.on('error', (err: Error) => {
-									finish(err);
-								});
-
-								resolve({
-									onDidReceiveMessage: reader.event,
-									onDidEnd: ended.event,
-									onDidClose: closed.event,
-									send(data: Uint8Array): void {
-										socket.write(data);
-									},
-									end(): void {
-										socket.end();
-									},
-									drain(): Thenable<void> {
-										return new Promise<void>(drainResolve => {
-											if (socket.writableNeedDrain) {
-												socket.once('drain', () => drainResolve());
+					// Perform CONNECT handshake to get the connection token.
+					return ctapConnect(ctlSocketPath, commitHash, clientId, authority)
+						.then(({ token }) => {
+							// Create a managed authority using a socket connection factory.
+							const makeConnection = (): Thenable<ManagedMessagePassing> => {
+								return new Promise((connResolve, connReject) => {
+									const socket = net.createConnection(socketPath, () => {
+										const reader = new vscode.EventEmitter<Uint8Array>();
+										const ended = new vscode.EventEmitter<void>();
+										const closed = new vscode.EventEmitter<Error | undefined>();
+										let done = false;
+										const finish = (err?: Error): void => {
+											if (done) {
 												return;
 											}
-											drainResolve();
-										});
-									}
-								});
-							});
-							socket.on('error', reject);
-						});
-					};
+											done = true;
+											ended.fire();
+											closed.fire(err);
+											reader.dispose();
+											ended.dispose();
+											closed.dispose();
+										};
 
-					const resolved = new managedResolvedAuthority(makeConnection);
-					if (connectionToken) {
-						resolved.connectionToken = connectionToken;
-					}
-					return Promise.resolve(resolved);
+										socket.on('data', (buf: Buffer) => {
+											reader.fire(new Uint8Array(buf));
+										});
+
+										socket.on('end', () => {
+											finish();
+										});
+
+										socket.on('close', (hadError: boolean) => {
+											if (!hadError) {
+												finish();
+											}
+										});
+
+										socket.on('error', (err: Error) => {
+											finish(err);
+										});
+
+										connResolve({
+											onDidReceiveMessage: reader.event,
+											onDidEnd: ended.event,
+											onDidClose: closed.event,
+											send(data: Uint8Array): void {
+												socket.write(data);
+											},
+											end(): void {
+												socket.end();
+											},
+											drain(): Thenable<void> {
+												return new Promise<void>(drainResolve => {
+													if (socket.writableNeedDrain) {
+														socket.once('drain', () => drainResolve());
+														return;
+													}
+													drainResolve();
+												});
+											}
+										});
+									});
+									socket.on('error', connReject);
+								});
+							};
+
+							const resolved = new managedResolvedAuthority(makeConnection);
+							if (token) {
+								resolved.connectionToken = token;
+							}
+							return resolved;
+						})
+						.catch((err: Error) => {
+							throw remoteAuthorityResolverError.NotAvailable(
+								'CTAP1 CONNECT failed: ' + err.message
+							);
+						});
 				}
 			});
 
 			context.subscriptions.push(resolver);
+
+			// Clean up all leases on extension deactivation.
+			context.subscriptions.push({
+				dispose: () => {
+					for (const [, conn] of activeLeases) {
+						conn.destroy();
+					}
+					activeLeases.clear();
+				}
+			});
+
 			if (registerResourceLabelFormatter) {
 				// Fallback label before a specific session authority is resolved.
 				const formatter = registerResourceLabelFormatter({

@@ -1,6 +1,6 @@
 # CodeTap
 
-CodeTap bridges VS Code on the host with containers, VMs, and remote machines. It downloads and runs VS Code Server inside the target environment, exposes the session over a Unix socket in `/dev/shm/codetap/`, and pairs with a companion VS Code extension that discovers sessions automatically and connects with one click.
+CodeTap bridges VS Code on the host with containers, VMs, and remote machines. It downloads and runs VS Code Server inside the target environment, exposes the session over Unix sockets in `/dev/shm/codetap/`, and pairs with a companion VS Code extension that discovers sessions automatically and connects with one click.
 
 **The problem it solves:** Getting a full VS Code remote development session into a container typically requires the Dev Containers extension, SSH access, or baking VS Code Server into images. CodeTap eliminates all of that — drop a single static binary into any Linux environment and get a working VS Code connection in seconds.
 
@@ -16,16 +16,17 @@ CodeTap bridges VS Code on the host with containers, VMs, and remote machines. I
 
 ```
 ┌─────────────────────┐       /dev/shm/codetap/
-│  VS Code (host)     │◄──────  session.sock
-│  + CodeTap ext      │         session.json
-└─────────────────────┘         session.token
-                                    ▲
+│  VS Code (host)     │◄──────  session.ctl.sock  (CTAP1 control protocol)
+│  + CodeTap ext      │         session.sock       (VS Code Server data)
+└─────────────────────┘             ▲
                                     │ (ipc=host or stdio relay)
                              ┌──────┴───────┐
                              │  Container   │
                              │  codetap run │
                              └──────────────┘
 ```
+
+The socket directory contains only `.ctl.sock` and `.sock` files, created exclusively by codetap. The extension reads nothing from disk — all metadata and authentication is served over the CTAP1 control protocol.
 
 ## Installation
 
@@ -47,7 +48,7 @@ Install the VS Code extension from the `.vsix` file in Releases, or build it fro
 
 ### Mode 1: Shared /dev/shm (--ipc=host)
 
-The simplest mode. The container shares `/dev/shm` with the host, so VS Code can see the socket directly.
+The simplest mode. The container shares `/dev/shm` with the host, so VS Code can see the sockets directly.
 
 ```sh
 # Start a container with shared IPC
@@ -58,13 +59,13 @@ docker run --ipc=host -v /usr/local/bin/codetap:/usr/local/bin/codetap:ro \
 codetap run --name myproject --folder /workspace
 ```
 
-The VS Code extension discovers the session in `/dev/shm/codetap/` and offers to connect.
+The VS Code extension discovers the session via its control socket in `/dev/shm/codetap/` and offers to connect.
 
 ### Mode 2: Stdio relay (no --ipc=host needed)
 
 For containers that can't share IPC, the stdio relay multiplexes VS Code Server traffic over stdin/stdout. No shared memory required.
 
-The VS Code extension automatically writes its commit hash to a sidecar file. The relay reads it and negotiates the correct VS Code Server version with the remote side via an init handshake — no `--commit` flag needed.
+The VS Code extension connects via the CTAP1 control socket protocol to negotiate the VS Code Server version. The relay reads the commit from the CONNECT handshake and negotiates with the remote side via an init frame — no `--commit` flag needed.
 
 ```sh
 # On the host — codetap creates the /dev/shm socket and spawns the remote command
@@ -89,10 +90,6 @@ codetap relay --name k8s-pod -- \
   codetap run --stdio
 ```
 
-#### Init phase (automatic commit negotiation)
-
-When the relay starts, it waits for the VS Code extension to write a `.commit` file containing the client's exact VS Code Server commit hash. The relay then sends this commit to the remote side in a `FrameInit` message. The remote provisions the matching VS Code Server version and acknowledges before any connections are accepted. This eliminates version mismatch errors entirely.
-
 ### Listing sessions
 
 ```sh
@@ -107,7 +104,7 @@ codetap list
 codetap clean
 ```
 
-Removes metadata for sessions whose sockets are no longer alive (e.g., after a container exit without graceful shutdown).
+Removes socket files for sessions whose control sockets are no longer alive (e.g., after a container exit without graceful shutdown).
 
 ## Commands
 
@@ -140,6 +137,34 @@ Running with no subcommand prints help. Passing flags without a subcommand defau
 | `--folder` | cwd | Workspace folder for metadata |
 | `--socket-dir` | `/dev/shm/codetap` | Socket directory |
 
+## CTAP1 control protocol
+
+CodeTap sessions expose a text-based, line-oriented control protocol on `<name>.ctl.sock`. The VS Code extension uses it for session discovery, authentication, and version negotiation.
+
+### INFO (stateless)
+
+```
+Extension → codetap:   CTAP1 INFO\n
+codetap → Extension:   {"name":"myproject","commit":"072586...","arch":"x64","folder":"/workspace","pid":197,"started_at":"2024-01-15T10:30:00Z"}\n
+```
+
+The connection is closed after the response. Used by `codetap list` and session discovery.
+
+### CONNECT (lease)
+
+```
+Extension → codetap:   CTAP1 CONNECT <commit> <client_id>\n
+codetap → Extension:   OK <token>\n
+                  or:   ERR <message>\n
+```
+
+`client_id` is typically the VS Code process PID. After `OK`, the control connection stays open as a **lease** — codetap tracks connected clients via open lease connections. When the connection closes (VS Code exits, window closes), the lease is released.
+
+**Version negotiation:**
+- If the requested commit matches the running server: `OK <token>` immediately.
+- If different and no other clients are connected: codetap restarts code-server with the new version, then responds `OK <token>`.
+- If different but other clients are connected with the current version: `ERR version mismatch: <current> running, <N> client(s) connected`.
+
 ## Commit resolution
 
 CodeTap automatically determines which VS Code Server version to download. The resolution order for direct mode (`codetap run`) is:
@@ -152,7 +177,7 @@ CodeTap automatically determines which VS Code Server version to download. The r
 
 Running bare `codetap run` with network access downloads the latest stable server. To run offline, provide a commit via any of the first three methods.
 
-In **stdio relay mode** (`codetap relay ... -- codetap run --stdio`), the commit is negotiated automatically: the VS Code extension writes the client's commit hash to a `.commit` sidecar file, and the relay sends it to the remote side via a `FrameInit` handshake before any connections are accepted. This ensures the remote always provisions the exact VS Code Server version that the client needs.
+In **stdio relay mode** (`codetap relay ... -- codetap run --stdio`), the commit is negotiated automatically: the VS Code extension sends the client's commit hash via the CTAP1 CONNECT handshake, and the relay forwards it to the remote side via a FrameInit frame before any connections are accepted. This ensures the remote always provisions the exact VS Code Server version that the client needs.
 
 ## Storage
 
@@ -161,11 +186,11 @@ In **stdio relay mode** (`codetap relay ... -- codetap run --stdio`), the commit
 | `~/.codetap/cache/` | Downloaded VS Code Server tarballs |
 | `~/.codetap/repository/` | Extracted VS Code Server binaries |
 | `~/.codetap/.commit` | Default commit hash |
-| `/dev/shm/codetap/` | Runtime sockets, metadata, tokens, and commit sidecar files |
+| `/dev/shm/codetap/` | Runtime socket files (`.ctl.sock` and `.sock` only) |
 
 ## VS Code Extension
 
-The companion TypeScript extension (`extension/`) turns VS Code into a CodeTap client. It registers a `codetap` remote authority, polls the socket directory for `.json` metadata files, and presents discovered sessions in a sidebar tree view with live/dead status indicators. Connecting opens the remote folder over the Unix socket using VS Code's managed message-passing protocol — no port forwarding or SSH required.
+The companion TypeScript extension (`extension/`) turns VS Code into a CodeTap client. It registers a `codetap` remote authority, polls the socket directory for `.ctl.sock` control sockets, queries each via the CTAP1 INFO command, and presents discovered sessions in a sidebar tree view with live/dead status indicators. Connecting performs a CTAP1 CONNECT handshake to negotiate the version and obtain the connection token, then opens the remote folder over the data socket using VS Code's managed message-passing protocol — no port forwarding or SSH required.
 
 > Note: `codetap` uses the VS Code resolver API proposal.
 > One-time setup on stable VS Code:
@@ -180,7 +205,7 @@ The companion TypeScript extension (`extension/`) turns VS Code into a CodeTap c
 > Flatpak `argv.json` path:
 > `~/.var/app/com.visualstudio.code/config/Code/argv.json`
 
-**Commands:** `codetap.connect` (open session), `codetap.refresh` (re-scan), `codetap.copyToken` (copy auth token to clipboard).
+**Commands:** `codetap.connect` (open session), `codetap.refresh` (re-scan).
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -216,7 +241,7 @@ services:
 codetap relay --name myservice -- docker attach myservice
 ```
 
-`docker attach` connects to the main process's stdin/stdout — exactly the stdio pipe that `codetap run --stdio` expects. The relay creates the `/dev/shm/codetap/` socket and the VS Code extension discovers it.
+`docker attach` connects to the main process's stdin/stdout — exactly the stdio pipe that `codetap run --stdio` expects. The relay creates the `/dev/shm/codetap/` sockets and the VS Code extension discovers the session via the control socket.
 
 ### Why this works
 

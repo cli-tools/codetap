@@ -25,15 +25,14 @@ type ServerRunner interface {
 	Start(binPath, socketPath, token string) (wait func() error, stop func(), err error)
 }
 
-// MetadataStore persists and reads socket metadata and connection tokens.
+// MetadataStore manages socket paths and session discovery in the socket directory.
+// All session metadata is served over the CTAP1 control protocol rather than files.
 type MetadataStore interface {
-	WriteMetadata(m Metadata) error
-	WriteToken(name, token string) error
-	ReadMetadata(name string) (Metadata, error)
-	ReadToken(name string) (string, error)
-	ListEntries() ([]SocketEntry, error)
-	Remove(name string) error
 	SocketPath(name string) string
+	CtlSocketPath(name string) string
+	ListSessionNames() ([]string, error)
+	Remove(name string) error
+	EnsureDir() error
 }
 
 // TokenGenerator creates cryptographically secure connection tokens.

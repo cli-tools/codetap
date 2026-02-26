@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"os"
-	"path/filepath"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -264,17 +267,24 @@ Flags:`)
 	fmt.Fprintln(w, "NAME\tCOMMIT\tFOLDER\tPID\tSTATUS\tSTARTED")
 	for _, e := range entries {
 		status := "dead"
+		started := "-"
+		commitShort := "-"
+		folder := "-"
+		pid := 0
 		if e.Alive {
 			status = "alive"
+			commitShort = e.Metadata.Commit
+			if len(commitShort) > 12 {
+				commitShort = commitShort[:12]
+			}
+			folder = e.Metadata.Folder
+			pid = e.Metadata.PID
+			if !e.Metadata.StartedAt.IsZero() {
+				started = e.Metadata.StartedAt.Format(time.DateTime)
+			}
 		}
-		commitShort := e.Metadata.Commit
-		if len(commitShort) > 12 {
-			commitShort = commitShort[:12]
-		}
-		started := e.Metadata.StartedAt.Format(time.DateTime)
 		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
-			e.Name, commitShort, e.Metadata.Folder,
-			e.Metadata.PID, status, started)
+			e.Name, commitShort, folder, pid, status, started)
 	}
 	w.Flush()
 }
@@ -282,7 +292,7 @@ Flags:`)
 func cleanCmd(args []string) {
 	fs := flag.NewFlagSet("codetap clean", flag.ExitOnError)
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, `Remove stale sessions whose sockets are no longer alive.
+		fmt.Fprintln(os.Stderr, `Remove stale sessions whose control sockets are no longer alive.
 
 Usage:
   codetap clean [flags]
@@ -323,9 +333,9 @@ Creates a Unix socket in /dev/shm/codetap/ on the host and spawns a remote
 command that runs "codetap run --stdio". Traffic is multiplexed between the
 local socket and the remote process via stdin/stdout.
 
-The VS Code extension automatically writes the required commit hash to a
-sidecar file. The relay reads it and negotiates the correct VS Code Server
-version with the remote side — no --commit flag needed.
+The VS Code extension connects via the CTAP1 control socket protocol to
+negotiate the VS Code Server version. The relay reads the commit from the
+CONNECT handshake and negotiates with the remote side — no --commit flag needed.
 
 Usage:
   codetap relay [flags] -- COMMAND [ARGS...]
@@ -375,7 +385,12 @@ Flags:`)
 	}
 
 	st := store.NewFileStore(sockDir)
+	if err := st.EnsureDir(); err != nil {
+		fatal(err)
+	}
+
 	socketPath := st.SocketPath(resolvedName)
+	ctlSocketPath := st.CtlSocketPath(resolvedName)
 
 	resolvedFolder := *folder
 	if resolvedFolder == "" {
@@ -383,39 +398,156 @@ Flags:`)
 	}
 
 	arch, _ := plat.DetectArch()
-	tokenPath := filepath.Join(sockDir, resolvedName+".token")
-	if err := os.Remove(tokenPath); err != nil && !os.IsNotExist(err) {
-		fatal(fmt.Errorf("remove stale token: %w", err))
-	}
 
-	meta := domain.Metadata{
-		Name:      resolvedName,
-		Arch:      arch,
-		Folder:    resolvedFolder,
-		PID:       os.Getpid(),
-		StartedAt: time.Now(),
-	}
-	if err := st.WriteMetadata(meta); err != nil {
-		fatal(err)
-	}
+	// Clean stale socket files.
+	_ = os.Remove(ctlSocketPath)
+	_ = os.Remove(socketPath)
 
-	commitFilePath := filepath.Join(sockDir, resolvedName+".commit")
+	// Create the control socket listener.
+	ctlListener, err := net.Listen("unix", ctlSocketPath)
+	if err != nil {
+		fatal(fmt.Errorf("listen ctl socket: %w", err))
+	}
 
 	defer func() {
 		log.Info("cleaning up relay session", "name", resolvedName)
-		_ = os.Remove(commitFilePath)
+		_ = ctlListener.Close()
 		if err := st.Remove(resolvedName); err != nil {
 			log.Error("relay cleanup failed", "name", resolvedName, "err", err)
 		}
 	}()
 
-	onInit := func(ackedCommit string) {
-		meta.Commit = ackedCommit
-		_ = st.WriteMetadata(meta)
+	// Channel for receiving the commit from the first CONNECT.
+	commitCh := make(chan string, 1)
+	var commitOnce sync.Once
+
+	// Relay session metadata for INFO queries.
+	relayMeta := &relayState{
+		name:      resolvedName,
+		arch:      arch,
+		folder:    resolvedFolder,
+		pid:       os.Getpid(),
+		startedAt: time.Now(),
 	}
 
-	if err := relay.HostSide(socketPath, remaining, commitFilePath, onInit, log); err != nil {
+	// Accept control connections in background.
+	go func() {
+		for {
+			conn, acceptErr := ctlListener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go handleRelayCtlConn(conn, relayMeta, commitCh, &commitOnce, log)
+		}
+	}()
+
+	log.Info("waiting for VS Code client", "ctl", ctlSocketPath)
+
+	// Block until we get a commit from the first CONNECT.
+	clientCommit := <-commitCh
+
+	relayMeta.mu.Lock()
+	relayMeta.commit = clientCommit
+	relayMeta.mu.Unlock()
+
+	onInit := func(ackedCommit string) {
+		relayMeta.mu.Lock()
+		relayMeta.commit = ackedCommit
+		relayMeta.mu.Unlock()
+	}
+
+	if err := relay.HostSide(socketPath, remaining, clientCommit, onInit, log); err != nil {
 		fatal(err)
+	}
+}
+
+// relayState holds metadata for a relay session's control socket.
+type relayState struct {
+	mu        sync.Mutex
+	name      string
+	commit    string
+	arch      string
+	folder    string
+	pid       int
+	startedAt time.Time
+}
+
+// handleRelayCtlConn handles INFO and CONNECT on the relay's control socket.
+func handleRelayCtlConn(conn net.Conn, state *relayState, commitCh chan string, commitOnce *sync.Once, log domain.Logger) {
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	line = strings.TrimSpace(line)
+
+	switch {
+	case line == "CTAP1 INFO":
+		state.mu.Lock()
+		info := struct {
+			Name      string `json:"name"`
+			Commit    string `json:"commit"`
+			Arch      string `json:"arch"`
+			Folder    string `json:"folder"`
+			PID       int    `json:"pid"`
+			StartedAt string `json:"started_at"`
+		}{
+			Name:      state.name,
+			Commit:    state.commit,
+			Arch:      state.arch,
+			Folder:    state.folder,
+			PID:       state.pid,
+			StartedAt: state.startedAt.Format(time.RFC3339),
+		}
+		state.mu.Unlock()
+		data, _ := json.Marshal(info)
+		_, _ = conn.Write(append(data, '\n'))
+		_ = conn.Close()
+
+	case strings.HasPrefix(line, "CTAP1 CONNECT "):
+		parts := strings.Fields(line)
+		if len(parts) != 4 {
+			_, _ = fmt.Fprintf(conn, "ERR invalid CONNECT syntax\n")
+			_ = conn.Close()
+			return
+		}
+		clientCommit := parts[2]
+
+		// Send commit to relay main goroutine (only first CONNECT).
+		commitOnce.Do(func() {
+			state.mu.Lock()
+			state.commit = clientCommit
+			state.mu.Unlock()
+			commitCh <- clientCommit
+		})
+
+		// Reject mismatched commits — relay cannot switch versions.
+		state.mu.Lock()
+		established := state.commit
+		state.mu.Unlock()
+		if established != "" && clientCommit != established {
+			_, _ = fmt.Fprintf(conn, "ERR version mismatch: %s running in relay mode\n", established)
+			_ = conn.Close()
+			return
+		}
+
+		// Relay mode has no connection token — respond with empty token.
+		// Keep connection open as lease (extension expects it).
+		_ = conn.SetReadDeadline(time.Time{})
+		_, _ = fmt.Fprintf(conn, "OK\n")
+		log.Info("relay lease granted", "client", parts[3], "commit", clientCommit)
+
+		// Hold connection open until client disconnects.
+		buf := make([]byte, 1)
+		_, _ = conn.Read(buf)
+		_ = conn.Close()
+
+	default:
+		_, _ = fmt.Fprintf(conn, "ERR unknown command\n")
+		_ = conn.Close()
 	}
 }
 

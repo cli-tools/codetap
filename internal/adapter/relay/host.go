@@ -7,45 +7,19 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 
 	"codetap/internal/domain"
 )
 
-// waitForCommitFile polls for the .commit sidecar file written by the VS Code
-// extension. Blocks until the file appears.
-func waitForCommitFile(path string, logger domain.Logger) string {
-	logger.Info("waiting for VS Code client", "path", path)
-	for {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			c := strings.TrimSpace(string(data))
-			if c != "" {
-				short := c
-				if len(short) > 12 {
-					short = short[:12]
-				}
-				logger.Info("commit file found", "commit", short)
-				_ = os.Remove(path)
-				return c
-			}
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-}
-
 // HostSide creates a Unix socket listener, spawns the remote command, and
 // multiplexes accepted connections over the subprocess stdin/stdout.
 //
-// commitFilePath is the path to a sidecar file written by the VS Code
-// extension containing the client's commit hash. HostSide creates the socket
-// listener first (so the session is discoverable), then waits for the file,
-// spawns the subprocess, and performs the FrameInit handshake.
-func HostSide(socketPath string, command []string, commitFilePath string, onInit func(string), logger domain.Logger) error {
+// commit is the VS Code Server commit hash to negotiate with the remote side
+// via the FrameInit handshake.
+func HostSide(socketPath string, command []string, commit string, onInit func(string), logger domain.Logger) error {
 	// Create socket listener first so the session is discoverable by the
 	// VS Code extension and isAlive checks succeed.
 	_ = os.Remove(socketPath)
@@ -62,9 +36,6 @@ func HostSide(socketPath string, command []string, commitFilePath string, onInit
 	}()
 
 	logger.Info("listening", "socket", socketPath)
-
-	// Wait for the .commit file from the VS Code extension.
-	commit := waitForCommitFile(commitFilePath, logger)
 
 	// Spawn the subprocess
 	cmd := exec.Command(command[0], command[1:]...)

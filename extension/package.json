@@ -2,7 +2,7 @@
   "name": "codetap",
   "displayName": "CodeTap",
   "description": "Discover and connect to CodeTap VS Code Server sessions in containers",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "codetap",
   "license": "0BSD",
   "repository": {
@@ -26,8 +26,7 @@
     "onResolveRemoteAuthority:codetap",
     "onView:codetap.sessions",
     "onCommand:codetap.connect",
-    "onCommand:codetap.refresh",
-    "onCommand:codetap.copyToken"
+    "onCommand:codetap.refresh"
   ],
   "main": "./out/extension.js",
   "extensionKind": [
@@ -67,10 +66,6 @@
         "command": "codetap.refresh",
         "title": "CodeTap: Refresh Sessions",
         "icon": "$(refresh)"
-      },
-      {
-        "command": "codetap.copyToken",
-        "title": "CodeTap: Copy Connection Token"
       }
     ],
     "menus": {
@@ -86,10 +81,6 @@
           "command": "codetap.connect",
           "when": "view == codetap.sessions && viewItem == aliveSession",
           "group": "inline"
-        },
-        {
-          "command": "codetap.copyToken",
-          "when": "view == codetap.sessions && viewItem == aliveSession"
         }
       ]
     },

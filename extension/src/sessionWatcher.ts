@@ -26,39 +26,56 @@ export class SessionWatcher {
 		const sessions: Session[] = [];
 		let files: string[];
 		try {
-			files = fs.readdirSync(this.socketDir).filter(f => f.endsWith('.json'));
+			files = fs.readdirSync(this.socketDir).filter(f => f.endsWith('.ctl.sock'));
 		} catch {
 			return sessions;
 		}
 
 		for (const file of files) {
-			const name = path.basename(file, '.json');
-			const jsonPath = path.join(this.socketDir, file);
+			const name = file.replace(/\.ctl\.sock$/, '');
+			const ctlSocketPath = path.join(this.socketDir, file);
 			const socketPath = path.join(this.socketDir, name + '.sock');
-			const tokenPath = path.join(this.socketDir, name + '.token');
 			try {
-				const raw = fs.readFileSync(jsonPath, 'utf-8');
-				const metadata: SessionMetadata = JSON.parse(raw);
-				const alive = await this.isAlive(socketPath);
-				sessions.push({ name, socketPath, tokenPath, metadata, alive });
+				const metadata = await this.queryInfo(ctlSocketPath);
+				sessions.push({ name, socketPath, ctlSocketPath, metadata, alive: true });
 			} catch {
-				// Skip corrupt or unreadable entries
+				// Control socket exists but not responding — dead session.
+				sessions.push({
+					name,
+					socketPath,
+					ctlSocketPath,
+					metadata: { name, commit: '', arch: '', folder: '', pid: 0, started_at: '' },
+					alive: false,
+				});
 			}
 		}
 
 		return sessions;
 	}
 
-	private isAlive(socketPath: string): Promise<boolean> {
-		return new Promise(resolve => {
-			const conn = net.createConnection(socketPath, () => {
-				conn.destroy();
-				resolve(true);
+	private queryInfo(ctlSocketPath: string): Promise<SessionMetadata> {
+		return new Promise((resolve, reject) => {
+			const conn = net.createConnection(ctlSocketPath, () => {
+				conn.write('CTAP1 INFO\n');
 			});
-			conn.on('error', () => resolve(false));
-			conn.setTimeout(1000, () => {
+
+			let data = '';
+			conn.on('data', (chunk: Buffer) => {
+				data += chunk.toString();
+				if (data.includes('\n')) {
+					conn.destroy();
+					try {
+						resolve(JSON.parse(data.trim()));
+					} catch (e) {
+						reject(e);
+					}
+				}
+			});
+
+			conn.on('error', (err: Error) => reject(err));
+			conn.setTimeout(2000, () => {
 				conn.destroy();
-				resolve(false);
+				reject(new Error('timeout'));
 			});
 		});
 	}

@@ -10,7 +10,7 @@ export interface SessionMetadata {
 export interface Session {
 	name: string;
 	socketPath: string;
-	tokenPath: string;
+	ctlSocketPath: string;
 	metadata: SessionMetadata;
 	alive: boolean;
 }

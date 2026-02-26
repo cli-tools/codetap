@@ -1,6 +1,10 @@
 package app
 
-import "codetap/internal/domain"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // mockDownloader records calls and returns configured values.
 type mockDownloader struct {
@@ -61,6 +65,8 @@ func (m *mockRunner) Start(bin, sock, token string) (func() error, func(), error
 	if err != nil {
 		return nil, nil, err
 	}
+	// Create the socket file so waitForSocket succeeds in tests.
+	_ = os.WriteFile(sock, nil, 0600)
 	wait := func() error { return nil }
 	stop := func() {}
 	return wait, stop, nil
@@ -68,50 +74,52 @@ func (m *mockRunner) Start(bin, sock, token string) (func() error, func(), error
 
 // mockStore is an in-memory MetadataStore.
 type mockStore struct {
-	metadata  map[string]domain.Metadata
-	tokens    map[string]string
-	removed   []string
-	entries   []domain.SocketEntry
 	socketDir string
+	removed   []string
+	// ctlSockNames tracks names that have a ctl socket file (for ListSessionNames).
+	ctlSockNames []string
 }
 
 func newMockStore(socketDir string) *mockStore {
-	return &mockStore{
-		metadata:  make(map[string]domain.Metadata),
-		tokens:    make(map[string]string),
-		socketDir: socketDir,
+	return &mockStore{socketDir: socketDir}
+}
+
+func (m *mockStore) SocketPath(name string) string {
+	return filepath.Join(m.socketDir, name+".sock")
+}
+
+func (m *mockStore) CtlSocketPath(name string) string {
+	return filepath.Join(m.socketDir, name+".ctl.sock")
+}
+
+func (m *mockStore) ListSessionNames() ([]string, error) {
+	// If ctlSockNames is set, return those. Otherwise, scan directory.
+	if m.ctlSockNames != nil {
+		return m.ctlSockNames, nil
 	}
-}
-
-func (m *mockStore) WriteMetadata(meta domain.Metadata) error {
-	m.metadata[meta.Name] = meta
-	return nil
-}
-
-func (m *mockStore) WriteToken(name, token string) error {
-	m.tokens[name] = token
-	return nil
-}
-
-func (m *mockStore) ReadMetadata(name string) (domain.Metadata, error) {
-	return m.metadata[name], nil
-}
-
-func (m *mockStore) ReadToken(name string) (string, error) {
-	return m.tokens[name], nil
-}
-
-func (m *mockStore) ListEntries() ([]domain.SocketEntry, error) {
-	return m.entries, nil
+	// Scan the actual directory for *.ctl.sock files.
+	entries, err := os.ReadDir(m.socketDir)
+	if err != nil {
+		return nil, nil
+	}
+	var names []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".ctl.sock") {
+			names = append(names, strings.TrimSuffix(e.Name(), ".ctl.sock"))
+		}
+	}
+	return names, nil
 }
 
 func (m *mockStore) Remove(name string) error {
 	m.removed = append(m.removed, name)
+	os.Remove(m.SocketPath(name))
+	os.Remove(m.CtlSocketPath(name))
 	return nil
 }
 
-func (m *mockStore) SocketPath(name string) string {
-	return m.socketDir + "/" + name + ".sock"
+func (m *mockStore) EnsureDir() error {
+	return os.MkdirAll(m.socketDir, 0755)
 }
 
 // mockTokenGen returns a fixed token.

@@ -17,15 +17,14 @@ CodeTap discovers and connects to running CodeTap VS Code Server sessions.
 
 ## Features
 
-- Sidebar session list with alive/dead status
-- Connect to a selected alive session
-- Copy session connection token
+- Sidebar session list with alive/dead status via CTAP1 control protocol
+- Connect to a selected alive session (CTAP1 CONNECT handshake)
+- Automatic version negotiation with the server
 
 ## Commands
 
 - `CodeTap: Connect to Session` (`codetap.connect`)
 - `CodeTap: Refresh Sessions` (`codetap.refresh`)
-- `CodeTap: Copy Connection Token` (`codetap.copyToken`)
 
 ## Settings
 
