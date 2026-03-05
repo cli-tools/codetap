@@ -2,14 +2,18 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as net from 'net';
-import { Session, SessionMetadata } from './types';
+import { Session, SessionLocation, SessionMetadata } from './types';
 
 export class SessionWatcher {
 	private pollTimer: ReturnType<typeof setInterval> | undefined;
 	private readonly _onDidChange = new vscode.EventEmitter<void>();
 	readonly onDidChange = this._onDidChange.event;
 
-	constructor(private socketDir: string, private pollInterval: number) {}
+	constructor(
+		private socketDir: string,
+		private pollInterval: number,
+		private location: SessionLocation = 'local',
+	) {}
 
 	start(): void {
 		this.pollTimer = setInterval(() => this._onDidChange.fire(), this.pollInterval);
@@ -37,7 +41,7 @@ export class SessionWatcher {
 			const socketPath = path.join(this.socketDir, name + '.sock');
 			try {
 				const metadata = await this.queryInfo(ctlSocketPath);
-				sessions.push({ name, socketPath, ctlSocketPath, metadata, alive: true });
+				sessions.push({ name, socketPath, ctlSocketPath, metadata, alive: true, location: this.location });
 			} catch {
 				// Control socket exists but not responding — dead session.
 				sessions.push({
@@ -46,6 +50,7 @@ export class SessionWatcher {
 					ctlSocketPath,
 					metadata: { name, commit: '', arch: '', folder: '', pid: 0, started_at: '' },
 					alive: false,
+					location: this.location,
 				});
 			}
 		}

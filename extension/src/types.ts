@@ -7,10 +7,13 @@ export interface SessionMetadata {
 	started_at: string;
 }
 
+export type SessionLocation = 'local' | 'remote';
+
 export interface Session {
 	name: string;
 	socketPath: string;
 	ctlSocketPath: string;
 	metadata: SessionMetadata;
 	alive: boolean;
+	location: SessionLocation;
 }

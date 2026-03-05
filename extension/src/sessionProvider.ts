@@ -19,9 +19,11 @@ export class SessionProvider implements vscode.TreeDataProvider<Session> {
 			session.name,
 			vscode.TreeItemCollapsibleState.None
 		);
-		item.description = session.metadata.folder;
+		const locationTag = session.location === 'remote' ? '$(remote) ' : '';
+		item.description = `${locationTag}${session.metadata.folder}`;
 		item.tooltip = [
 			`Name: ${session.name}`,
+			`Location: ${session.location}`,
 			`Commit: ${session.metadata.commit}`,
 			`Arch: ${session.metadata.arch}`,
 			`PID: ${session.metadata.pid}`,
