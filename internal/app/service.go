@@ -85,6 +85,8 @@ type restartReq struct {
 func (s *Service) Run(cfg Config) error {
 	s.logger.Info("starting session", "name", cfg.Name, "commit", cfg.Commit, "arch", cfg.Arch)
 
+	startReaper() // reap orphaned zombies when running as PID 1 in a container
+
 	if err := s.store.EnsureDir(); err != nil {
 		return fmt.Errorf("ensure socket dir: %w", err)
 	}
@@ -540,6 +542,8 @@ func (s *Service) RunStdio(cfg Config, stdin io.Reader, stdout io.Writer, resolv
 	}
 
 	s.logger.Info("starting stdio session", "commit", commit, "arch", cfg.Arch)
+
+	startReaper() // reap orphaned zombies when running as PID 1 in a container
 
 	binPath, err := s.Provision(commit, cfg.Arch)
 	if err != nil {
