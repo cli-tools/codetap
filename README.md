@@ -42,7 +42,7 @@ curl -Lo /usr/local/bin/codetap https://github.com/cli-tools/codetap/releases/la
 chmod +x /usr/local/bin/codetap
 ```
 
-Install the VS Code extension from the `.vsix` file in Releases, or build it from source (see below).
+Install the VS Code extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=cli-tools.codetap), or from the `.vsix` file in Releases.
 
 ## Usage
 
@@ -214,6 +214,8 @@ The companion TypeScript extension (`extension/`) turns VS Code into a CodeTap c
 
 Build: `cd extension && npm ci && npm run compile && npm run package`
 
+Publish to the Marketplace: `npm run publish` (requires Microsoft account with `cli-tools` publisher access, uses `--azure-credential`)
+
 ## Replacing devcontainers with Docker Compose + CodeTap
 
 VS Code Dev Containers couple your container lifecycle to the IDE. Docker Compose + CodeTap gives you the same remote-development experience with plain Docker tooling — no Dev Containers extension, no `devcontainer.json`, no IDE lock-in.
@@ -318,6 +320,7 @@ cd codetap/extension
 npm ci
 npm run compile
 npm run package   # Creates codetap.vsix
+npm run publish   # Publish to VS Code Marketplace (requires cli-tools publisher access)
 ```
 
 ## License
