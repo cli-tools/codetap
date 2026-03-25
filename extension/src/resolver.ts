@@ -7,8 +7,8 @@ interface SessionInfo {
 }
 
 /**
- * Resolves codetap+<name> remote authorities by connecting directly
- * to the VS Code Server Unix socket via ManagedResolvedAuthority.
+ * Resolves codetap+<name> remote authorities by connecting VS Code
+ * directly to the VS Code Server Unix socket.
  */
 export class CodetapResolver implements vscode.RemoteAuthorityResolver {
 	private sessions = new Map<string, SessionInfo>();
@@ -22,7 +22,7 @@ export class CodetapResolver implements vscode.RemoteAuthorityResolver {
 		const session = this.sessions.get(name);
 		if (!session) {
 			throw vscode.RemoteAuthorityResolverError.NotAvailable(
-				`No codetap session "${name}" — connect via the CodeTap panel first.`
+				`No codetap session "${name}" — connect via the CodeTap panel first.`,
 			);
 		}
 
@@ -35,8 +35,9 @@ export class CodetapResolver implements vscode.RemoteAuthorityResolver {
 					const onDidClose = new vscode.EventEmitter<Error | undefined>();
 					const onDidEnd = new vscode.EventEmitter<void>();
 
-					socket.on('data', (data: Buffer) => onDidReceiveMessage.fire(data));
-					socket.on('close', (hadError: boolean) => onDidClose.fire(hadError ? new Error('socket closed with error') : undefined));
+					socket.on('data', (chunk: Buffer) => onDidReceiveMessage.fire(chunk));
+					socket.on('close', (hadError: boolean) =>
+						onDidClose.fire(hadError ? new Error('socket closed with error') : undefined));
 					socket.on('end', () => onDidEnd.fire());
 
 					resolve({
