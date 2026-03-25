@@ -2,7 +2,7 @@
   "name": "codetap",
   "displayName": "CodeTap",
   "description": "Discover and connect to CodeTap VS Code Server sessions in containers",
-  "version": "0.6.2",
+  "version": "0.6.7",
   "publisher": "cli-tools",
   "license": "0BSD",
   "repository": {
@@ -16,21 +16,20 @@
   "engines": {
     "vscode": "^1.87.0"
   },
-  "enabledApiProposals": [
-    "resolvers"
-  ],
   "icon": "icon.png",
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "onResolveRemoteAuthority:codetap",
-    "onView:codetap.sessions"
+    "onView:codetap.sessions",
+    "onResolveRemoteAuthority:codetap"
+  ],
+  "enabledApiProposals": [
+    "resolvers"
   ],
   "main": "./out/extension.js",
   "extensionKind": [
-    "ui",
-    "workspace"
+    "ui"
   ],
   "files": [
     "out/**/*.js",
@@ -111,7 +110,7 @@
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
     "package": "vsce package --out codetap.vsix",
-    "publish": "vsce publish --azure-credential --allow-proposed-apis resolvers"
+    "publish": "vsce publish --azure-credential"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
