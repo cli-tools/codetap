@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,7 +11,7 @@ import (
 	"codetap/internal/domain"
 )
 
-const urlTemplate = "https://update.code.visualstudio.com/commit:%s/server-linux-%s/stable"
+const urlTemplate = "https://update.code.visualstudio.com/commit:%s/%s/stable"
 
 // HTTPDownloader downloads VS Code Server tarballs via HTTP.
 type HTTPDownloader struct {
@@ -29,7 +30,8 @@ func NewHTTPDownloader(cacheDir string, logger domain.Logger) *HTTPDownloader {
 // Download fetches the server tarball for the given commit and arch.
 // Returns the path to the cached tarball. Skips download if already cached.
 func (d *HTTPDownloader) Download(commit, arch string) (string, error) {
-	filename := fmt.Sprintf("%s-%s.tar.gz", commit, arch)
+	artifact := serverArtifactName(arch, isAlpineLinux())
+	filename := fmt.Sprintf("%s-%s.tar.gz", commit, artifact)
 	dest := filepath.Join(d.cacheDir, filename)
 
 	if _, err := os.Stat(dest); err == nil {
@@ -41,8 +43,8 @@ func (d *HTTPDownloader) Download(commit, arch string) (string, error) {
 		return "", fmt.Errorf("create cache dir: %w", err)
 	}
 
-	url := fmt.Sprintf(urlTemplate, commit, arch)
-	d.logger.Info("downloading VS Code Server", "commit", commit, "arch", arch)
+	url := fmt.Sprintf(urlTemplate, commit, artifact)
+	d.logger.Info("downloading VS Code Server", "commit", commit, "arch", arch, "artifact", artifact)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -51,7 +53,7 @@ func (d *HTTPDownloader) Download(commit, arch string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("VS Code Server commit %s not found for arch %s — verify the commit hash matches your VS Code version", commit, arch)
+		return "", fmt.Errorf("VS Code Server commit %s not found for artifact %s (arch %s) — verify the commit hash matches your VS Code version", commit, artifact, arch)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download returned HTTP %d", resp.StatusCode)
@@ -82,4 +84,36 @@ func (d *HTTPDownloader) Download(commit, arch string) (string, error) {
 
 	d.logger.Info("download complete", "path", dest)
 	return dest, nil
+}
+
+func serverArtifactName(arch string, alpine bool) string {
+	if alpine {
+		switch arch {
+		case "x64":
+			return "server-linux-alpine"
+		case "arm64":
+			return "server-alpine-arm64"
+		}
+	}
+	return fmt.Sprintf("server-linux-%s", arch)
+}
+
+func isAlpineLinux() bool {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return false
+	}
+	return isAlpineOSRelease(data)
+}
+
+func isAlpineOSRelease(data []byte) bool {
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		if !bytes.HasPrefix(line, []byte("ID=")) {
+			continue
+		}
+		value := bytes.TrimPrefix(line, []byte("ID="))
+		value = bytes.Trim(value, "\"'")
+		return bytes.EqualFold(value, []byte("alpine"))
+	}
+	return false
 }
