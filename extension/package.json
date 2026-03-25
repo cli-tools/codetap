@@ -110,7 +110,7 @@
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
     "package": "vsce package --out codetap.vsix",
-    "publish": "vsce publish --azure-credential"
+    "publish": "vsce publish --azure-credential --allow-proposed-apis resolvers"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
