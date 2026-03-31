@@ -36,6 +36,7 @@ func (r *ProcessRunner) Start(binPath, socketPath, token string) (func() error, 
 	}
 
 	cmd := exec.Command(binPath, args...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	// Stdout is reserved for relay frame traffic in `codetap run --stdio`.
 	// Keep code-server logs on stderr to avoid corrupting the mux protocol.
 	cmd.Stdout = os.Stderr
